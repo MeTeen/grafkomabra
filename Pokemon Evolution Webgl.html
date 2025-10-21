@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pokemon Evolution: Abra → Kadabra → Alakazam</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+        }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:active {
+            background: #3d8b40;
+        }
+        #info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            text-align: center;
+            min-width: 200px;
+        }
+        #info h2 {
+            margin: 0 0 10px 0;
+            color: #FFD700;
+        }
+        .evolution-stage {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+    <div id="controls">
+        <h3 style="margin-top: 0;">Evolution Controls</h3>
+        <button onclick="evolveToAbra()">Abra</button>
+        <button onclick="evolveToKadabra()">Kadabra</button>
+        <button onclick="evolveToAlakazam()">Alakazam</button>
+        <br>
+        <button onclick="autoEvolve()">Auto Evolve</button>
+        <button onclick="toggleRotation()">Toggle Rotation</button>
+    </div>
+    <div id="info">
+        <h2 id="pokemonName">Abra</h2>
+        <div class="evolution-stage">Psychic Type</div>
+        <div id="pokemonInfo">The Psi Pokémon</div>
+    </div>
+
+    <script>
+        // WebGL Setup and Utilities
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext('webgl');
+
+        if (!gl) {
+            alert('WebGL not supported!');
+        }
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Vertex Shader
+        const vertexShaderSource = `
+            attribute vec3 aPosition;
+            attribute vec3 aNormal;
+            attribute vec3 aColor;
+
+            uniform mat4 uModelMatrix;
+            uniform mat4 uViewMatrix;
+            uniform mat4 uProjectionMatrix;
+            uniform mat4 uNormalMatrix;
+
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            varying vec3 vColor;
+
+            void main() {
+                vec4 worldPosition = uModelMatrix * vec4(aPosition, 1.0);
+                vPosition = worldPosition.xyz;
+                vNormal = mat3(uNormalMatrix) * aNormal;
+                vColor = aColor;
+                gl_Position = uProjectionMatrix * uViewMatrix * worldPosition;
+            }
+        `;
+
+        // Fragment Shader with enhanced brilliance
+        const fragmentShaderSource = `
+            precision mediump float;
+
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            varying vec3 vColor;
+
+            uniform vec3 uLightPosition;
+            uniform vec3 uViewPosition;
+            uniform float uGlowIntensity;
+            uniform float uMetallic;
+
+            void main() {
+                vec3 normal = normalize(vNormal);
+                vec3 lightDir = normalize(uLightPosition - vPosition);
+                vec3 viewDir = normalize(uViewPosition - vPosition);
+                vec3 reflectDir = reflect(-lightDir, normal);
+
+                // Enhanced Ambient with psychic glow
+                float ambientStrength = 0.4 + uGlowIntensity * 0.3;
+                vec3 ambient = ambientStrength * vColor;
+
+                // Diffuse with rim lighting
+                float diff = max(dot(normal, lightDir), 0.0);
+                vec3 diffuse = diff * vColor;
+
+                // Rim light for brilliance
+                float rimPower = 1.0 - max(dot(viewDir, normal), 0.0);
+                vec3 rimColor = vec3(0.8, 0.6, 1.0) * pow(rimPower, 3.0) * 0.5;
+
+                // Enhanced Specular with metallic control
+                float specularStrength = 0.7 + uMetallic * 0.3;
+                float spec = pow(max(dot(viewDir, reflectDir), 0.0), 64.0);
+                vec3 specular = specularStrength * spec * vec3(1.0, 1.0, 1.0);
+
+                // Psychic aura glow
+                vec3 psychicGlow = vec3(0.6, 0.3, 1.0) * uGlowIntensity * 0.5;
+
+                vec3 result = ambient + diffuse + specular + rimColor + psychicGlow;
+                gl_FragColor = vec4(result, 1.0);
+            }
+        `;
+
+        // Compile Shader
+        function compileShader(source, type) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Create Program
+        const vertexShader = compileShader(vertexShaderSource, gl.VERTEX_SHADER);
+        const fragmentShader = compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Program link error:', gl.getProgramInfoLog(program));
+        }
+
+        gl.useProgram(program);
+
+        // Get attribute and uniform locations
+        const aPosition = gl.getAttribLocation(program, 'aPosition');
+        const aNormal = gl.getAttribLocation(program, 'aNormal');
+        const aColor = gl.getAttribLocation(program, 'aColor');
+        const uModelMatrix = gl.getUniformLocation(program, 'uModelMatrix');
+        const uViewMatrix = gl.getUniformLocation(program, 'uViewMatrix');
+        const uProjectionMatrix = gl.getUniformLocation(program, 'uProjectionMatrix');
+        const uNormalMatrix = gl.getUniformLocation(program, 'uNormalMatrix');
+        const uLightPosition = gl.getUniformLocation(program, 'uLightPosition');
+        const uViewPosition = gl.getUniformLocation(program, 'uViewPosition');
+        const uGlowIntensity = gl.getUniformLocation(program, 'uGlowIntensity');
+        const uMetallic = gl.getUniformLocation(program, 'uMetallic');
+
+        // Matrix Math Library
+        class Mat4 {
+            static identity() {
+                return [
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ];
+            }
+
+            static perspective(fov, aspect, near, far) {
+                const f = 1.0 / Math.tan(fov / 2);
+                const nf = 1 / (near - far);
+                return [
+                    f / aspect, 0, 0, 0,
+                    0, f, 0, 0,
+                    0, 0, (far + near) * nf, -1,
+                    0, 0, 2 * far * near * nf, 0
+                ];
+            }
+
+            static lookAt(eye, center, up) {
+                const z = this.normalize([eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]]);
+                const x = this.normalize(this.cross(up, z));
+                const y = this.cross(z, x);
+
+                return [
+                    x[0], y[0], z[0], 0,
+                    x[1], y[1], z[1], 0,
+                    x[2], y[2], z[2], 0,
+                    -this.dot(x, eye), -this.dot(y, eye), -this.dot(z, eye), 1
+                ];
+            }
+
+            static translate(m, v) {
+                const out = [...m];
+                out[12] = m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12];
+                out[13] = m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13];
+                out[14] = m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14];
+                out[15] = m[3] * v[0] + m[7] * v[1] + m[11] * v[2] + m[15];
+                return out;
+            }
+
+            static rotateY(m, angle) {
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const out = [...m];
+                const a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3];
+                const a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11];
+
+                out[0] = a00 * c + a20 * s;
+                out[1] = a01 * c + a21 * s;
+                out[2] = a02 * c + a22 * s;
+                out[3] = a03 * c + a23 * s;
+                out[8] = a20 * c - a00 * s;
+                out[9] = a21 * c - a01 * s;
+                out[10] = a22 * c - a02 * s;
+                out[11] = a23 * c - a03 * s;
+
+                return out;
+            }
+
+            static scale(m, v) {
+                const out = [...m];
+                out[0] *= v[0]; out[1] *= v[0]; out[2] *= v[0]; out[3] *= v[0];
+                out[4] *= v[1]; out[5] *= v[1]; out[6] *= v[1]; out[7] *= v[1];
+                out[8] *= v[2]; out[9] *= v[2]; out[10] *= v[2]; out[11] *= v[2];
+                return out;
+            }
+
+            static invert(m) {
+                const out = [];
+                const a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3];
+                const a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7];
+                const a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11];
+                const a30 = m[12], a31 = m[13], a32 = m[14], a33 = m[15];
+
+                const b00 = a00 * a11 - a01 * a10;
+                const b01 = a00 * a12 - a02 * a10;
+                const b02 = a00 * a13 - a03 * a10;
+                const b03 = a01 * a12 - a02 * a11;
+                const b04 = a01 * a13 - a03 * a11;
+                const b05 = a02 * a13 - a03 * a12;
+                const b06 = a20 * a31 - a21 * a30;
+                const b07 = a20 * a32 - a22 * a30;
+                const b08 = a20 * a33 - a23 * a30;
+                const b09 = a21 * a32 - a22 * a31;
+                const b10 = a21 * a33 - a23 * a31;
+                const b11 = a22 * a33 - a23 * a32;
+
+                let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+
+                if (!det) return null;
+                det = 1.0 / det;
+
+                out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+                out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+                out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+                out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+                out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+                out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+                out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+                out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+                out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+                out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+                out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+                out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+                out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+                out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+                out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+                out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+
+                return out;
+            }
+
+            static transpose(m) {
+                return [
+                    m[0], m[4], m[8], m[12],
+                    m[1], m[5], m[9], m[13],
+                    m[2], m[6], m[10], m[14],
+                    m[3], m[7], m[11], m[15]
+                ];
+            }
+
+            static normalize(v) {
+                const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                return len > 0 ? [v[0] / len, v[1] / len, v[2] / len] : v;
+            }
+
+            static cross(a, b) {
+                return [
+                    a[1] * b[2] - a[2] * b[1],
+                    a[2] * b[0] - a[0] * b[2],
+                    a[0] * b[1] - a[1] * b[0]
+                ];
+            }
+
+            static dot(a, b) {
+                return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            }
+        }
+
+        // Geometric Primitive Generator using Quadric Surfaces
+        class QuadricGenerator {
+            // Ellipsoid: (x/a)² + (y/b)² + (z/c)² = 1
+            static createEllipsoid(radiusX, radiusY, radiusZ, segments = 32, color = [1, 1, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                for (let lat = 0; lat <= segments; lat++) {
+                    const theta = lat * Math.PI / segments;
+                    const sinTheta = Math.sin(theta);
+                    const cosTheta = Math.cos(theta);
+
+                    for (let lon = 0; lon <= segments; lon++) {
+                        const phi = lon * 2 * Math.PI / segments;
+                        const sinPhi = Math.sin(phi);
+                        const cosPhi = Math.cos(phi);
+
+                        const x = radiusX * cosPhi * sinTheta;
+                        const y = radiusY * cosTheta;
+                        const z = radiusZ * sinPhi * sinTheta;
+
+                        vertices.push(x, y, z);
+
+                        // Normal for ellipsoid
+                        const nx = x / (radiusX * radiusX);
+                        const ny = y / (radiusY * radiusY);
+                        const nz = z / (radiusZ * radiusZ);
+                        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                        normals.push(nx / nLen, ny / nLen, nz / nLen);
+
+                        colors.push(...color);
+                    }
+                }
+
+                for (let lat = 0; lat < segments; lat++) {
+                    for (let lon = 0; lon < segments; lon++) {
+                        const first = lat * (segments + 1) + lon;
+                        const second = first + segments + 1;
+
+                        indices.push(first, second, first + 1);
+                        indices.push(second, second + 1, first + 1);
+                    }
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+
+            // Cylinder using parametric quadric form
+            static createCylinder(radius, height, segments = 32, color = [1, 1, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                // Side surface
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const x = Math.cos(angle) * radius;
+                    const z = Math.sin(angle) * radius;
+
+                    vertices.push(x, -height / 2, z);
+                    normals.push(Math.cos(angle), 0, Math.sin(angle));
+                    colors.push(...color);
+
+                    vertices.push(x, height / 2, z);
+                    normals.push(Math.cos(angle), 0, Math.sin(angle));
+                    colors.push(...color);
+                }
+
+                for (let i = 0; i < segments; i++) {
+                    const base = i * 2;
+                    indices.push(base, base + 1, base + 2);
+                    indices.push(base + 1, base + 3, base + 2);
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+
+            // Cone using quadric surface
+            static createCone(radius, height, segments = 32, color = [1, 1, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                // Apex
+                vertices.push(0, height, 0);
+                normals.push(0, 1, 0);
+                colors.push(...color);
+
+                // Base circle
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const x = Math.cos(angle) * radius;
+                    const z = Math.sin(angle) * radius;
+
+                    vertices.push(x, 0, z);
+
+                    // Cone normal calculation
+                    const slant = Math.sqrt(radius * radius + height * height);
+                    const ny = radius / slant;
+                    const nr = height / slant;
+                    normals.push(Math.cos(angle) * nr, ny, Math.sin(angle) * nr);
+                    colors.push(...color);
+                }
+
+                for (let i = 1; i <= segments; i++) {
+                    indices.push(0, i, i + 1);
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+
+            // Torus (donut shape) - useful for tail bands
+            static createTorus(majorRadius, minorRadius, majorSegments = 32, minorSegments = 16, color = [0.6, 0.3, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                for (let i = 0; i <= majorSegments; i++) {
+                    const u = (i / majorSegments) * Math.PI * 2;
+                    const cosU = Math.cos(u);
+                    const sinU = Math.sin(u);
+
+                    for (let j = 0; j <= minorSegments; j++) {
+                        const v = (j / minorSegments) * Math.PI * 2;
+                        const cosV = Math.cos(v);
+                        const sinV = Math.sin(v);
+
+                        const x = (majorRadius + minorRadius * cosV) * cosU;
+                        const y = minorRadius * sinV;
+                        const z = (majorRadius + minorRadius * cosV) * sinU;
+
+                        vertices.push(x, y, z);
+
+                        const nx = cosV * cosU;
+                        const ny = sinV;
+                        const nz = cosV * sinU;
+                        normals.push(nx, ny, nz);
+
+                        colors.push(...color);
+                    }
+                }
+
+                for (let i = 0; i < majorSegments; i++) {
+                    for (let j = 0; j < minorSegments; j++) {
+                        const a = i * (minorSegments + 1) + j;
+                        const b = a + minorSegments + 1;
+
+                        indices.push(a, b, a + 1);
+                        indices.push(b, b + 1, a + 1);
+                    }
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+        }
+
+        // Pokemon Model Builder
+        class PokemonModel {
+            constructor() {
+                this.parts = [];
+            }
+
+            addPart(geometry, transform = Mat4.identity()) {
+                this.parts.push({ geometry, transform });
+            }
+
+            getData() {
+                let allVertices = [];
+                let allNormals = [];
+                let allColors = [];
+                let allIndices = [];
+                let indexOffset = 0;
+
+                for (const part of this.parts) {
+                    const { geometry, transform } = part;
+
+                    // Transform vertices
+                    for (let i = 0; i < geometry.vertices.length; i += 3) {
+                        const x = geometry.vertices[i];
+                        const y = geometry.vertices[i + 1];
+                        const z = geometry.vertices[i + 2];
+
+                        const tx = transform[0] * x + transform[4] * y + transform[8] * z + transform[12];
+                        const ty = transform[1] * x + transform[5] * y + transform[9] * z + transform[13];
+                        const tz = transform[2] * x + transform[6] * y + transform[10] * z + transform[14];
+
+                        allVertices.push(tx, ty, tz);
+                    }
+
+                    // Transform normals
+                    for (let i = 0; i < geometry.normals.length; i += 3) {
+                        const nx = geometry.normals[i];
+                        const ny = geometry.normals[i + 1];
+                        const nz = geometry.normals[i + 2];
+
+                        const tnx = transform[0] * nx + transform[4] * ny + transform[8] * nz;
+                        const tny = transform[1] * nx + transform[5] * ny + transform[9] * nz;
+                        const tnz = transform[2] * nx + transform[6] * ny + transform[10] * nz;
+
+                        allNormals.push(tnx, tny, tnz);
+                    }
+
+                    allColors.push(...geometry.colors);
+
+                    for (const idx of geometry.indices) {
+                        allIndices.push(idx + indexOffset);
+                    }
+
+                    indexOffset += geometry.vertices.length / 3;
+                }
+
+                return {
+                    vertices: new Float32Array(allVertices),
+                    normals: new Float32Array(allNormals),
+                    colors: new Float32Array(allColors),
+                    indices: new Uint16Array(allIndices)
+                };
+            }
+        }
+
+        // Create Abra Model - Small, sleepy psychic Pokemon
+        function createAbra() {
+            const model = new PokemonModel();
+            const yellow = [1.0, 0.9, 0.3];  // Brighter golden yellow
+            const brown = [0.7, 0.4, 0.15];  // Rich brown
+            const darkBrown = [0.5, 0.25, 0.1];
+            const black = [0.15, 0.15, 0.15];
+
+            // Head (round and cat-like with fox features)
+            const head = QuadricGenerator.createEllipsoid(0.38, 0.42, 0.35, 32, yellow);
+            let transform = Mat4.translate(Mat4.identity(), [0, 1.35, 0]);
+            model.addPart(head, transform);
+
+            // Snout (small protruding)
+            const snout = QuadricGenerator.createEllipsoid(0.15, 0.12, 0.18, 16, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.28, 0.32]);
+            model.addPart(snout, transform);
+
+            // Large fox ears (cones, more prominent)
+            const ear = QuadricGenerator.createCone(0.15, 0.38, 20, yellow);
+            let earTransform = Mat4.translate(Mat4.identity(), [-0.28, 1.68, 0]);
+            model.addPart(ear, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.28, 1.68, 0]);
+            model.addPart(ear, earTransform);
+
+            // Inner ear (brown, smaller cones)
+            const innerEar = QuadricGenerator.createCone(0.08, 0.25, 16, brown);
+            earTransform = Mat4.translate(Mat4.identity(), [-0.28, 1.7, 0]);
+            model.addPart(innerEar, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.28, 1.7, 0]);
+            model.addPart(innerEar, earTransform);
+
+            // Closed eyes (flat dark ellipsoids)
+            const eye = QuadricGenerator.createEllipsoid(0.12, 0.04, 0.02, 16, black);
+            let eyeTransform = Mat4.translate(Mat4.identity(), [-0.15, 1.4, 0.32]);
+            model.addPart(eye, eyeTransform);
+            eyeTransform = Mat4.translate(Mat4.identity(), [0.15, 1.4, 0.32]);
+            model.addPart(eye, eyeTransform);
+
+            // Compact body (smaller, rounder)
+            const body = QuadricGenerator.createEllipsoid(0.42, 0.48, 0.38, 32, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 0.5, 0]);
+            model.addPart(body, transform);
+
+            // Brown chest armor (more defined)
+            const chest = QuadricGenerator.createEllipsoid(0.38, 0.32, 0.28, 24, brown);
+            transform = Mat4.translate(Mat4.identity(), [0, 0.58, 0.22]);
+            model.addPart(chest, transform);
+
+            // Shoulder pads
+            const shoulder = QuadricGenerator.createEllipsoid(0.15, 0.12, 0.12, 16, brown);
+            transform = Mat4.translate(Mat4.identity(), [-0.42, 0.75, 0.1]);
+            model.addPart(shoulder, transform);
+            transform = Mat4.translate(Mat4.identity(), [0.42, 0.75, 0.1]);
+            model.addPart(shoulder, transform);
+
+            // Short arms
+            const arm = QuadricGenerator.createCylinder(0.13, 0.38, 20, yellow);
+            let armTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.38, 0]);
+            model.addPart(arm, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.48, 0.38, 0]);
+            model.addPart(arm, armTransform);
+
+            // Three-fingered hands
+            const hand = QuadricGenerator.createEllipsoid(0.16, 0.1, 0.14, 20, yellow);
+            let handTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.12, 0]);
+            model.addPart(hand, handTransform);
+            handTransform = Mat4.translate(Mat4.identity(), [0.48, 0.12, 0]);
+            model.addPart(hand, handTransform);
+
+            // Fingers (small cones)
+            for (let i = -1; i <= 1; i++) {
+                const finger = QuadricGenerator.createCone(0.03, 0.08, 12, yellow);
+                transform = Mat4.translate(Mat4.identity(), [-0.48 + i * 0.05, 0.05, 0.12]);
+                model.addPart(finger, transform);
+                transform = Mat4.translate(Mat4.identity(), [0.48 + i * 0.05, 0.05, 0.12]);
+                model.addPart(finger, transform);
+            }
+
+            // Legs (short and sturdy)
+            const leg = QuadricGenerator.createCylinder(0.15, 0.32, 20, yellow);
+            let legTransform = Mat4.translate(Mat4.identity(), [-0.22, -0.18, 0]);
+            model.addPart(leg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.22, -0.18, 0]);
+            model.addPart(leg, legTransform);
+
+            // Large feet with toes
+            const foot = QuadricGenerator.createEllipsoid(0.18, 0.12, 0.24, 20, yellow);
+            let footTransform = Mat4.translate(Mat4.identity(), [-0.22, -0.42, 0.08]);
+            model.addPart(foot, footTransform);
+            footTransform = Mat4.translate(Mat4.identity(), [0.22, -0.42, 0.08]);
+            model.addPart(foot, footTransform);
+
+            // Tail (curved cylinder with brown bands)
+            const tail = QuadricGenerator.createCylinder(0.11, 0.65, 20, yellow);
+            transform = Mat4.rotateY(Mat4.identity(), Math.PI / 5);
+            transform = Mat4.translate(transform, [0, 0.25, -0.42]);
+            model.addPart(tail, transform);
+
+            // Multiple tail bands (brown torus rings)
+            for (let i = 0; i < 2; i++) {
+                const tailBand = QuadricGenerator.createTorus(0.12, 0.035, 20, 10, brown);
+                transform = Mat4.rotateY(Mat4.identity(), Math.PI / 5);
+                transform = Mat4.translate(transform, [0, 0.1 - i * 0.25, -0.42]);
+                model.addPart(tailBand, transform);
+            }
+
+            return model.getData();
+        }
+
+        // Create Kadabra Model - Taller, lankier, more intelligent looking
+        function createKadabra() {
+            const model = new PokemonModel();
+            const yellow = [1.0, 0.92, 0.35];  // Brighter yellow
+            const brown = [0.7, 0.4, 0.15];
+            const red = [1.0, 0.15, 0.15];  // Bright red for star
+            const silver = [0.9, 0.92, 0.95];  // Shiny silver
+            const whiskerColor = [0.8, 0.5, 0.2];
+
+            // Head (more elongated and angular)
+            const head = QuadricGenerator.createEllipsoid(0.32, 0.4, 0.3, 28, yellow);
+            let transform = Mat4.translate(Mat4.identity(), [0, 1.85, 0]);
+            model.addPart(head, transform);
+
+            // Prominent red forehead star (5-pointed star approximation)
+            const starCore = QuadricGenerator.createEllipsoid(0.14, 0.14, 0.025, 20, red);
+            transform = Mat4.translate(Mat4.identity(), [0, 2.0, 0.3]);
+            model.addPart(starCore, transform);
+
+            // Star points (small pyramids/cones)
+            for (let i = 0; i < 5; i++) {
+                const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
+                const starPoint = QuadricGenerator.createCone(0.04, 0.1, 12, red);
+                const x = Math.cos(angle) * 0.12;
+                const y = 2.0 + Math.sin(angle) * 0.12;
+                transform = Mat4.translate(Mat4.identity(), [x, y, 0.32]);
+                model.addPart(starPoint, transform);
+            }
+
+            // Sharp, pointed ears
+            const ear = QuadricGenerator.createCone(0.11, 0.42, 20, yellow);
+            let earTransform = Mat4.translate(Mat4.identity(), [-0.25, 2.18, 0]);
+            model.addPart(ear, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.25, 2.18, 0]);
+            model.addPart(ear, earTransform);
+
+            // Inner ear details
+            const innerEar = QuadricGenerator.createCone(0.06, 0.28, 16, brown);
+            earTransform = Mat4.translate(Mat4.identity(), [-0.25, 2.2, 0]);
+            model.addPart(innerEar, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.25, 2.2, 0]);
+            model.addPart(innerEar, earTransform);
+
+            // Whisker stubs (small ellipsoids on face)
+            const whisker = QuadricGenerator.createEllipsoid(0.05, 0.05, 0.08, 12, whiskerColor);
+            for (let side of [-1, 1]) {
+                transform = Mat4.translate(Mat4.identity(), [side * 0.22, 1.75, 0.28]);
+                model.addPart(whisker, transform);
+            }
+
+            // Long snout
+            const snout = QuadricGenerator.createEllipsoid(0.14, 0.11, 0.16, 16, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.72, 0.28]);
+            model.addPart(snout, transform);
+
+            // Elongated torso (taller and thinner)
+            const upperBody = QuadricGenerator.createEllipsoid(0.36, 0.55, 0.32, 28, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.05, 0]);
+            model.addPart(upperBody, transform);
+
+            // Brown chest armor (more prominent)
+            const chest = QuadricGenerator.createEllipsoid(0.32, 0.38, 0.28, 24, brown);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.15, 0.18]);
+            model.addPart(chest, transform);
+
+            // Red lightning bolt pattern on abdomen (3 zigzag lines)
+            for (let i = 0; i < 3; i++) {
+                const wave = QuadricGenerator.createEllipsoid(0.28, 0.035, 0.025, 16, red);
+                transform = Mat4.translate(Mat4.identity(), [0, 0.65 - i * 0.14, 0.32]);
+                model.addPart(wave, transform);
+            }
+
+            // Lower body (narrower waist)
+            const lowerBody = QuadricGenerator.createEllipsoid(0.32, 0.32, 0.28, 24, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 0.28, 0]);
+            model.addPart(lowerBody, transform);
+
+            // Very thin, long upper arms
+            const upperArm = QuadricGenerator.createCylinder(0.09, 0.42, 20, yellow);
+            let armTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.95, 0]);
+            model.addPart(upperArm, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.48, 0.95, 0]);
+            model.addPart(upperArm, armTransform);
+
+            // Prominent brown elbow joints
+            const elbow = QuadricGenerator.createEllipsoid(0.11, 0.11, 0.11, 20, brown);
+            let elbowTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.72, 0]);
+            model.addPart(elbow, elbowTransform);
+            elbowTransform = Mat4.translate(Mat4.identity(), [0.48, 0.72, 0]);
+            model.addPart(elbow, elbowTransform);
+
+            // Long forearms
+            const lowerArm = QuadricGenerator.createCylinder(0.08, 0.4, 20, yellow);
+            armTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.3, 0]);
+            model.addPart(lowerArm, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.48, 0.3, 0]);
+            model.addPart(lowerArm, armTransform);
+
+            // Three-clawed hands
+            const hand = QuadricGenerator.createEllipsoid(0.13, 0.09, 0.11, 20, yellow);
+            let handTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.08, 0]);
+            model.addPart(hand, handTransform);
+            handTransform = Mat4.translate(Mat4.identity(), [0.48, 0.08, 0]);
+            model.addPart(hand, handTransform);
+
+            // Claws
+            for (let i = -1; i <= 1; i++) {
+                const claw = QuadricGenerator.createCone(0.025, 0.1, 12, brown);
+                transform = Mat4.translate(Mat4.identity(), [-0.48 + i * 0.04, 0.0, 0.1]);
+                model.addPart(claw, transform);
+                transform = Mat4.translate(Mat4.identity(), [0.48 + i * 0.04, 0.0, 0.1]);
+                model.addPart(claw, transform);
+            }
+
+            // SIGNATURE SILVER SPOON in right hand (larger and more prominent)
+            const spoonHandle = QuadricGenerator.createCylinder(0.025, 0.58, 16, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.48, -0.22, 0]);
+            model.addPart(spoonHandle, transform);
+
+            const spoonHead = QuadricGenerator.createEllipsoid(0.1, 0.14, 0.035, 20, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.48, -0.55, 0]);
+            model.addPart(spoonHead, transform);
+
+            // Inner spoon detail (concave look)
+            const spoonInner = QuadricGenerator.createEllipsoid(0.08, 0.11, 0.02, 16, [0.7, 0.72, 0.75]);
+            transform = Mat4.translate(Mat4.identity(), [0.48, -0.55, 0.02]);
+            model.addPart(spoonInner, transform);
+
+            // Long upper legs
+            const upperLeg = QuadricGenerator.createCylinder(0.13, 0.4, 20, yellow);
+            let legTransform = Mat4.translate(Mat4.identity(), [-0.2, -0.18, 0]);
+            model.addPart(upperLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.2, -0.18, 0]);
+            model.addPart(upperLeg, legTransform);
+
+            // Prominent brown knee joints
+            const knee = QuadricGenerator.createEllipsoid(0.14, 0.14, 0.14, 20, brown);
+            let kneeTransform = Mat4.translate(Mat4.identity(), [-0.2, -0.42, 0]);
+            model.addPart(knee, kneeTransform);
+            kneeTransform = Mat4.translate(Mat4.identity(), [0.2, -0.42, 0]);
+            model.addPart(knee, kneeTransform);
+
+            // Lower legs
+            const lowerLeg = QuadricGenerator.createCylinder(0.11, 0.38, 20, yellow);
+            legTransform = Mat4.translate(Mat4.identity(), [-0.2, -0.75, 0]);
+            model.addPart(lowerLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.2, -0.75, 0]);
+            model.addPart(lowerLeg, legTransform);
+
+            // Large, defined feet
+            const foot = QuadricGenerator.createEllipsoid(0.17, 0.11, 0.25, 20, yellow);
+            let footTransform = Mat4.translate(Mat4.identity(), [-0.2, -1.0, 0.08]);
+            model.addPart(foot, footTransform);
+            footTransform = Mat4.translate(Mat4.identity(), [0.2, -1.0, 0.08]);
+            model.addPart(foot, footTransform);
+
+            // Tail with single brown band
+            const tail = QuadricGenerator.createCylinder(0.09, 0.55, 20, yellow);
+            transform = Mat4.rotateY(Mat4.identity(), Math.PI / 4.5);
+            transform = Mat4.translate(transform, [0, 0.08, -0.38]);
+            model.addPart(tail, transform);
+
+            const tailBand = QuadricGenerator.createTorus(0.1, 0.032, 20, 10, brown);
+            transform = Mat4.rotateY(Mat4.identity(), Math.PI / 4.5);
+            transform = Mat4.translate(transform, [0, -0.1, -0.38]);
+            model.addPart(tailBand, transform);
+
+            return model.getData();
+        }
+
+        // Create Alakazam Model - Master psychic with dual spoons and majestic mustache
+        function createAlakazam() {
+            const model = new PokemonModel();
+            const yellow = [1.0, 0.95, 0.4];  // Brilliant golden yellow
+            const brown = [0.75, 0.45, 0.18];  // Rich brown
+            const silver = [0.95, 0.97, 1.0];  // Brilliant silver
+            const red = [0.95, 0.2, 0.2];  // For star remnants
+            const whiskerBrown = [0.6, 0.35, 0.15];
+
+            // Head with wise, angular features
+            const head = QuadricGenerator.createEllipsoid(0.34, 0.38, 0.32, 32, yellow);
+            let transform = Mat4.translate(Mat4.identity(), [0, 1.95, 0]);
+            model.addPart(head, transform);
+
+            // Small forehead markings (star remnants, smaller than Kadabra)
+            const starMark = QuadricGenerator.createEllipsoid(0.08, 0.08, 0.02, 16, red);
+            transform = Mat4.translate(Mat4.identity(), [0, 2.12, 0.32]);
+            model.addPart(starMark, transform);
+
+            // Very large, majestic ears
+            const ear = QuadricGenerator.createCone(0.14, 0.48, 24, yellow);
+            let earTransform = Mat4.translate(Mat4.identity(), [-0.27, 2.3, 0]);
+            model.addPart(ear, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.27, 2.3, 0]);
+            model.addPart(ear, earTransform);
+
+            // Inner ear details
+            const innerEar = QuadricGenerator.createCone(0.08, 0.32, 20, brown);
+            earTransform = Mat4.translate(Mat4.identity(), [-0.27, 2.32, 0]);
+            model.addPart(innerEar, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.27, 2.32, 0]);
+            model.addPart(innerEar, earTransform);
+
+            // PROMINENT MUSTACHE (Alakazam's signature feature!)
+            // Long, sweeping mustache segments
+            const mustacheL1 = QuadricGenerator.createEllipsoid(0.32, 0.06, 0.1, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [-0.42, 1.78, 0.18]);
+            model.addPart(mustacheL1, transform);
+
+            const mustacheL2 = QuadricGenerator.createEllipsoid(0.28, 0.05, 0.08, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [-0.48, 1.72, 0.15]);
+            model.addPart(mustacheL2, transform);
+
+            const mustacheR1 = QuadricGenerator.createEllipsoid(0.32, 0.06, 0.1, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [0.42, 1.78, 0.18]);
+            model.addPart(mustacheR1, transform);
+
+            const mustacheR2 = QuadricGenerator.createEllipsoid(0.28, 0.05, 0.08, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [0.48, 1.72, 0.15]);
+            model.addPart(mustacheR2, transform);
+
+            // Mustache tips (curled upward)
+            for (let side of [-1, 1]) {
+                const mustacheTip = QuadricGenerator.createCone(0.04, 0.15, 16, whiskerBrown);
+                transform = Mat4.translate(Mat4.identity(), [side * 0.62, 1.8, 0.12]);
+                model.addPart(mustacheTip, transform);
+            }
+
+            // Small nose
+            const nose = QuadricGenerator.createEllipsoid(0.08, 0.06, 0.1, 16, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.82, 0.3]);
+            model.addPart(nose, transform);
+
+            // More muscular upper body (stronger than Kadabra)
+            const upperBody = QuadricGenerator.createEllipsoid(0.38, 0.5, 0.32, 32, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.15, 0]);
+            model.addPart(upperBody, transform);
+
+            // Impressive brown chest armor with segments
+            const chestArmor = QuadricGenerator.createEllipsoid(0.34, 0.35, 0.28, 28, brown);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.25, 0.16]);
+            model.addPart(chestArmor, transform);
+
+            // Chest armor details (plates)
+            const chestPlate = QuadricGenerator.createEllipsoid(0.28, 0.25, 0.24, 20, [0.65, 0.38, 0.14]);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.28, 0.2]);
+            model.addPart(chestPlate, transform);
+
+            // Large shoulder armor pads
+            const shoulderL = QuadricGenerator.createEllipsoid(0.2, 0.18, 0.18, 20, brown);
+            transform = Mat4.translate(Mat4.identity(), [-0.44, 1.35, 0]);
+            model.addPart(shoulderL, transform);
+
+            const shoulderR = QuadricGenerator.createEllipsoid(0.2, 0.18, 0.18, 20, brown);
+            transform = Mat4.translate(Mat4.identity(), [0.44, 1.35, 0]);
+            model.addPart(shoulderR, transform);
+
+            // Thinner waist
+            const lowerBody = QuadricGenerator.createEllipsoid(0.3, 0.38, 0.26, 28, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 0.5, 0]);
+            model.addPart(lowerBody, transform);
+
+            // Thin but defined upper arms
+            const upperArm = QuadricGenerator.createCylinder(0.075, 0.4, 24, yellow);
+            let armTransform = Mat4.translate(Mat4.identity(), [-0.55, 1.0, 0]);
+            model.addPart(upperArm, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.55, 1.0, 0]);
+            model.addPart(upperArm, armTransform);
+
+            // Brown elbow guards
+            const elbow = QuadricGenerator.createEllipsoid(0.1, 0.1, 0.1, 20, brown);
+            let elbowTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.78, 0]);
+            model.addPart(elbow, elbowTransform);
+            elbowTransform = Mat4.translate(Mat4.identity(), [0.55, 0.78, 0]);
+            model.addPart(elbow, elbowTransform);
+
+            // Forearms with prominent brown armor bands
+            const forearmArmor = QuadricGenerator.createCylinder(0.09, 0.36, 24, brown);
+            armTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.4, 0]);
+            model.addPart(forearmArmor, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.55, 0.4, 0]);
+            model.addPart(forearmArmor, armTransform);
+
+            // Yellow skin visible through armor gaps
+            const forearmSkin = QuadricGenerator.createCylinder(0.07, 0.34, 20, yellow);
+            armTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.4, 0]);
+            model.addPart(forearmSkin, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.55, 0.4, 0]);
+            model.addPart(forearmSkin, armTransform);
+
+            // Three-fingered hands
+            const hand = QuadricGenerator.createEllipsoid(0.12, 0.09, 0.1, 24, yellow);
+            let handTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.18, 0]);
+            model.addPart(hand, handTransform);
+            handTransform = Mat4.translate(Mat4.identity(), [0.55, 0.18, 0]);
+            model.addPart(hand, handTransform);
+
+            // TWO LEGENDARY SILVER SPOONS (Alakazam's ultimate signature!)
+            // Left spoon (larger and more ornate)
+            const spoonHandle1 = QuadricGenerator.createCylinder(0.028, 0.62, 20, silver);
+            transform = Mat4.translate(Mat4.identity(), [-0.55, -0.2, 0]);
+            model.addPart(spoonHandle1, transform);
+
+            const spoonHead1 = QuadricGenerator.createEllipsoid(0.11, 0.16, 0.04, 24, silver);
+            transform = Mat4.translate(Mat4.identity(), [-0.55, -0.58, 0]);
+            model.addPart(spoonHead1, transform);
+
+            // Spoon inner detail (concave)
+            const spoonInner1 = QuadricGenerator.createEllipsoid(0.09, 0.13, 0.025, 20, [0.75, 0.78, 0.82]);
+            transform = Mat4.translate(Mat4.identity(), [-0.55, -0.58, 0.025]);
+            model.addPart(spoonInner1, transform);
+
+            // Right spoon (symmetrical)
+            const spoonHandle2 = QuadricGenerator.createCylinder(0.028, 0.62, 20, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.55, -0.2, 0]);
+            model.addPart(spoonHandle2, transform);
+
+            const spoonHead2 = QuadricGenerator.createEllipsoid(0.11, 0.16, 0.04, 24, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.55, -0.58, 0]);
+            model.addPart(spoonHead2, transform);
+
+            const spoonInner2 = QuadricGenerator.createEllipsoid(0.09, 0.13, 0.025, 20, [0.75, 0.78, 0.82]);
+            transform = Mat4.translate(Mat4.identity(), [0.55, -0.58, 0.025]);
+            model.addPart(spoonInner2, transform);
+
+            // Spoon decorative elements (psychic energy rings)
+            for (let side of [-1, 1]) {
+                const spoonRing = QuadricGenerator.createTorus(0.03, 0.015, 16, 8, [0.7, 0.5, 1.0]);
+                transform = Mat4.translate(Mat4.identity(), [side * 0.55, -0.35, 0]);
+                model.addPart(spoonRing, transform);
+            }
+
+            // Strong upper legs
+            const upperLeg = QuadricGenerator.createCylinder(0.12, 0.38, 24, yellow);
+            let legTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.08, 0]);
+            model.addPart(upperLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.18, -0.08, 0]);
+            model.addPart(upperLeg, legTransform);
+
+            // Brown knee armor (larger than Kadabra)
+            const kneeArmor = QuadricGenerator.createEllipsoid(0.14, 0.14, 0.14, 24, brown);
+            let kneeTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.3, 0]);
+            model.addPart(kneeArmor, kneeTransform);
+            kneeTransform = Mat4.translate(Mat4.identity(), [0.18, -0.3, 0]);
+            model.addPart(kneeArmor, kneeTransform);
+
+            // Lower legs
+            const lowerLeg = QuadricGenerator.createCylinder(0.1, 0.32, 24, yellow);
+            legTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.62, 0]);
+            model.addPart(lowerLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.18, -0.62, 0]);
+            model.addPart(lowerLeg, legTransform);
+
+            // Three-toed feet
+            const foot = QuadricGenerator.createEllipsoid(0.16, 0.1, 0.24, 24, yellow);
+            let footTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.85, 0.08]);
+            model.addPart(foot, footTransform);
+            footTransform = Mat4.translate(Mat4.identity(), [0.18, -0.85, 0.08]);
+            model.addPart(foot, footTransform);
+
+            // Toe claws
+            for (let toe of [-0.1, 0, 0.1]) {
+                for (let side of [-1, 1]) {
+                    const claw = QuadricGenerator.createCone(0.025, 0.08, 12, brown);
+                    transform = Mat4.translate(Mat4.identity(), [side * 0.18 + toe * 0.5, -0.92, 0.22]);
+                    model.addPart(claw, transform);
+                }
+            }
+
+            // Thin tail (shows evolution refinement)
+            const tail = QuadricGenerator.createCylinder(0.07, 0.48, 24, yellow);
+            transform = Mat4.rotateY(Mat4.identity(), Math.PI / 5.5);
+            transform = Mat4.translate(transform, [0, 0.2, -0.32]);
+            model.addPart(tail, transform);
+
+            return model.getData();
+        }
+
+        // Buffer Management
+        class MeshBuffer {
+            constructor(data) {
+                this.vertexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data.vertices, gl.STATIC_DRAW);
+
+                this.normalBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data.normals, gl.STATIC_DRAW);
+
+                this.colorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data.colors, gl.STATIC_DRAW);
+
+                this.indexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data.indices, gl.STATIC_DRAW);
+
+                this.indexCount = data.indices.length;
+            }
+
+            bind() {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+                gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aPosition);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+                gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aNormal);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+                gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aColor);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+            }
+
+            draw() {
+                gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_SHORT, 0);
+            }
+        }
+
+        // Enhanced Animation System with smooth transitions
+        class EvolutionAnimator {
+            constructor() {
+                this.currentStage = 0; // 0: Abra, 1: Kadabra, 2: Alakazam
+                this.targetStage = 0;
+                this.transitionProgress = 0;
+                this.isTransitioning = false;
+                this.transitionSpeed = 0.45; // Slower for more dramatic effect
+
+                this.models = [
+                    new MeshBuffer(createAbra()),
+                    new MeshBuffer(createKadabra()),
+                    new MeshBuffer(createAlakazam())
+                ];
+
+                this.particleIntensity = 0;
+                this.flashIntensity = 0;
+                this.rotationBoost = 0;
+            }
+
+            setTarget(stage) {
+                if (stage !== this.currentStage && stage >= 0 && stage <= 2) {
+                    this.targetStage = stage;
+                    this.isTransitioning = true;
+                    this.transitionProgress = 0;
+                    this.flashIntensity = 0;
+                }
+            }
+
+            update(deltaTime) {
+                if (this.isTransitioning) {
+                    this.transitionProgress += deltaTime * this.transitionSpeed;
+
+                    // Smooth easing function for natural animation
+                    const easeProgress = this.easeInOutCubic(Math.min(this.transitionProgress, 1.0));
+
+                    // Multi-phase animation
+                    if (this.transitionProgress < 0.3) {
+                        // Build up phase - gathering energy
+                        this.particleIntensity = easeProgress / 0.3;
+                        this.flashIntensity = 0;
+                        this.rotationBoost = easeProgress * 2;
+                    } else if (this.transitionProgress < 0.5) {
+                        // Peak transformation - bright flash
+                        const peakProgress = (this.transitionProgress - 0.3) / 0.2;
+                        this.particleIntensity = 1.0;
+                        this.flashIntensity = Math.sin(peakProgress * Math.PI);
+                        this.rotationBoost = 2.0 + peakProgress * 3;
+                    } else if (this.transitionProgress < 0.7) {
+                        // Morphing phase - actual change happens
+                        const morphProgress = (this.transitionProgress - 0.5) / 0.2;
+                        if (morphProgress > 0.5 && this.currentStage !== this.targetStage) {
+                            this.currentStage = this.targetStage; // Swap model midway
+                        }
+                        this.particleIntensity = 1.0 - morphProgress * 0.3;
+                        this.flashIntensity = 0.5 * (1.0 - morphProgress);
+                        this.rotationBoost = 5.0 - morphProgress * 2;
+                    } else {
+                        // Settling phase - energy dissipates
+                        const settleProgress = (this.transitionProgress - 0.7) / 0.3;
+                        this.particleIntensity = 0.7 * (1.0 - settleProgress);
+                        this.flashIntensity = 0;
+                        this.rotationBoost = 3.0 * (1.0 - settleProgress);
+                    }
+
+                    if (this.transitionProgress >= 1.0) {
+                        this.transitionProgress = 1.0;
+                        this.isTransitioning = false;
+                        this.currentStage = this.targetStage;
+                        this.particleIntensity = 0;
+                        this.flashIntensity = 0;
+                        this.rotationBoost = 0;
+                    }
+                }
+            }
+
+            // Smooth easing function
+            easeInOutCubic(t) {
+                return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+            }
+
+            getCurrentModel() {
+                return this.models[this.currentStage];
+            }
+
+            getScale() {
+                if (this.isTransitioning) {
+                    // Dynamic pulsing scale with multiple frequencies
+                    const basePulse = 1.0 + Math.sin(this.transitionProgress * Math.PI * 6) * 0.12 * this.particleIntensity;
+                    const microPulse = Math.sin(this.transitionProgress * Math.PI * 20) * 0.03 * this.particleIntensity;
+                    const flashExpansion = this.flashIntensity * 0.15;
+
+                    return basePulse + microPulse + flashExpansion;
+                }
+                // Idle breathing animation
+                return 1.0 + Math.sin(Date.now() * 0.001) * 0.02;
+            }
+
+            getParticleIntensity() {
+                return this.particleIntensity;
+            }
+
+            getFlashIntensity() {
+                return this.flashIntensity;
+            }
+
+            getRotationBoost() {
+                return this.rotationBoost;
+            }
+        }
+
+        // Global state
+        let animator = new EvolutionAnimator();
+        let rotation = 0;
+        let autoRotate = true;
+        let lastTime = 0;
+
+        const pokemonNames = ['Abra', 'Kadabra', 'Alakazam'];
+        const pokemonInfo = [
+            'The Psi Pokémon - Sleeps 18 hours a day',
+            'Emits alpha waves - Silver spoon amplifies power',
+            'IQ of 5000 - Dual spoons for maximum psychic power'
+        ];
+
+        // UI Functions
+        function evolveToAbra() {
+            animator.setTarget(0);
+            updatePokemonInfo();
+        }
+
+        function evolveToKadabra() {
+            animator.setTarget(1);
+            updatePokemonInfo();
+        }
+
+        function evolveToAlakazam() {
+            animator.setTarget(2);
+            updatePokemonInfo();
+        }
+
+        function toggleRotation() {
+            autoRotate = !autoRotate;
+        }
+
+        let autoEvolveInterval = null;
+        function autoEvolve() {
+            if (autoEvolveInterval) {
+                clearInterval(autoEvolveInterval);
+                autoEvolveInterval = null;
+            } else {
+                let stage = 0;
+                autoEvolveInterval = setInterval(() => {
+                    animator.setTarget(stage);
+                    updatePokemonInfo();
+                    stage = (stage + 1) % 3;
+                }, 3000);
+            }
+        }
+
+        function updatePokemonInfo() {
+            setTimeout(() => {
+                const stage = animator.currentStage;
+                document.getElementById('pokemonName').textContent = pokemonNames[stage];
+                document.getElementById('pokemonInfo').textContent = pokemonInfo[stage];
+            }, 800);
+        }
+
+        // Render Loop with enhanced effects
+        function render(currentTime) {
+            currentTime *= 0.001; // Convert to seconds
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            // Update animation
+            animator.update(deltaTime);
+
+            // Clear with psychic-themed background and evolution flash
+            const bgPulse = 0.1 + Math.sin(currentTime * 0.5) * 0.05;
+            const flashIntensity = animator.getFlashIntensity();
+            const bgR = bgPulse + flashIntensity * 0.6;
+            const bgG = bgPulse + flashIntensity * 0.4;
+            const bgB = 0.2 + flashIntensity * 0.7;
+            gl.clearColor(bgR, bgG, bgB, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+            gl.enable(gl.CULL_FACE);
+
+            // Camera setup
+            const aspect = canvas.width / canvas.height;
+            const projectionMatrix = Mat4.perspective(Math.PI / 4, aspect, 0.1, 100.0);
+            const viewMatrix = Mat4.lookAt([0, 1, 5], [0, 0.5, 0], [0, 1, 0]);
+
+            // Model transformation with dynamic rotation boost during evolution
+            let modelMatrix = Mat4.identity();
+            if (autoRotate) {
+                const rotationSpeed = 0.5 + animator.getRotationBoost() * 0.5;
+                rotation += deltaTime * rotationSpeed;
+            }
+            modelMatrix = Mat4.rotateY(modelMatrix, rotation);
+
+            const scale = animator.getScale();
+            modelMatrix = Mat4.scale(modelMatrix, [scale, scale, scale]);
+
+            // Normal matrix for lighting
+            const normalMatrix = Mat4.transpose(Mat4.invert(modelMatrix));
+
+            // Dynamic lighting that orbits during evolution
+            const lightAngle = animator.isTransitioning ? currentTime * 2 : currentTime * 0.3;
+            const lightX = Math.cos(lightAngle) * 4;
+            const lightZ = Math.sin(lightAngle) * 4;
+            const lightY = 5 + Math.sin(currentTime) * 1;
+
+            // Set base uniforms
+            gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+            gl.uniformMatrix4fv(uViewMatrix, false, viewMatrix);
+            gl.uniformMatrix4fv(uModelMatrix, false, modelMatrix);
+            gl.uniformMatrix4fv(uNormalMatrix, false, normalMatrix);
+            gl.uniform3fv(uLightPosition, [lightX, lightY, lightZ]);
+            gl.uniform3fv(uViewPosition, [0, 1, 5]);
+
+            // New brilliance uniforms
+            const glowIntensity = animator.getParticleIntensity();
+            gl.uniform1f(uGlowIntensity, glowIntensity);
+            gl.uniform1f(uMetallic, 0.8); // High metallic for shiny look
+
+            // Draw current model
+            const currentModel = animator.getCurrentModel();
+            currentModel.bind();
+            currentModel.draw();
+
+            // Enhanced evolution effects with multiple layers
+            if (animator.isTransitioning) {
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+
+                // Psychic aura glow (3 layers for depth)
+                for (let i = 0; i < 3; i++) {
+                    const glowScale = scale * (1.0 + glowIntensity * (0.08 + i * 0.04));
+                    let glowModel = Mat4.identity();
+                    glowModel = Mat4.rotateY(glowModel, rotation + i * 0.3);
+                    glowModel = Mat4.scale(glowModel, [glowScale, glowScale, glowScale]);
+
+                    const layerGlow = glowIntensity * (0.8 - i * 0.25);
+                    gl.uniformMatrix4fv(uModelMatrix, false, glowModel);
+                    gl.uniformMatrix4fv(uNormalMatrix, false, Mat4.transpose(Mat4.invert(glowModel)));
+                    gl.uniform1f(uGlowIntensity, layerGlow);
+
+                    currentModel.draw();
+                }
+
+                gl.disable(gl.BLEND);
+
+                // Reset glow for next frame
+                gl.uniform1f(uGlowIntensity, glowIntensity);
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        });
+
+        // Start rendering
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
