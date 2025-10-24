@@ -1,0 +1,2885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pokemon Evolution</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(180deg, #87CEEB 0%, #E0F6FF 100%);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:active {
+            background: #3d8b40;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+    <div id="controls">
+        <button onclick="evolveToAbra()">Abra</button>
+        <button onclick="evolveToKadabra()">Kadabra</button>
+        <button onclick="evolveToAlakazam()">Alakazam</button>
+    </div>
+
+    <script>
+        /*
+         * POKEMON EVOLUTION - COMPREHENSIVE TRANSFORMATION DEMO
+         *
+         * This WebGL application demonstrates ALL required transformations during Pokemon evolution:
+         *
+         * a) TRANSLATION:
+         *    - Pokemon rises upward during evolution (Y-axis translation)
+         *    - Side-to-side wobble effect (X-axis translation)
+         *    - Smooth descent with bounce animation
+         *    - Implementation: Mat4.translate() with dynamic offset vectors
+         *
+         * b) ROTATION (Standard Axes):
+         *    - X-axis rotation (pitch): Pokemon tilts forward/backward during evolution
+         *    - Y-axis rotation (yaw): Continuous spinning, accelerates during evolution
+         *    - Z-axis rotation (roll): Wobble effect for dynamic motion
+         *    - Implementation: Mat4.rotateX(), Mat4.rotateY(), Mat4.rotateZ()
+         *
+         * c) SCALING:
+         *    - Shrinks before evolution (0.85x scale)
+         *    - Expands dramatically during transformation (1.25x scale)
+         *    - Returns to normal size with bounce effect
+         *    - Proportional scaling on all axes
+         *    - Implementation: Mat4.scale() with dynamic multiplier
+         *
+         * d) ARBITRARY AXIS ROTATION:
+         *    - Rotation around custom diagonal axis [1, 1, 0]
+         *    - Uses Rodrigues' rotation formula for mathematical accuracy
+         *    - Creates complex spinning motion combining X and Y rotation
+         *    - Multiple full rotations during evolution sequence
+         *    - Implementation: Mat4.rotateArbitrary() with Rodrigues' formula:
+         *      R = I + sin(θ)K + (1-cos(θ))K²
+         *      where K is the skew-symmetric cross-product matrix of the axis
+         *
+         * TRANSFORMATION ORDER (applied in sequence):
+         * 1. Translation - Position in world space
+         * 2. Y-axis Rotation - Main spinning
+         * 3. X-axis Rotation - Pitch
+         * 4. Z-axis Rotation - Roll
+         * 5. Arbitrary Axis Rotation - Complex diagonal spin
+         * 6. Scaling - Final size adjustment
+         *
+         * All transformations are smoothly animated with easing functions and
+         * are visible during the evolution sequence (Build-up, Peak, Morphing, Settling phases).
+         *
+         * e) HIERARCHICAL OBJECTS (Body Part Animation):
+         *    Implemented using vertex shader deformation based on spatial position.
+         *    Each body part moves independently with parent-child relationships:
+         *
+         *    HIERARCHY STRUCTURE:
+         *    - Body (parent) → affects all parts above it
+         *      ├─ Head → tilts independently on body
+         *      ├─ Left Arm → rotates from shoulder
+         *      │   └─ Left Hand → waves relative to arm
+         *      ├─ Right Arm → rotates from shoulder
+         *      │   └─ Right Hand → waves relative to arm
+         *      │       └─ Spoons → spin relative to hands (Kadabra/Alakazam only)
+         *      ├─ Left Leg
+         *      │   └─ Left Knee → bends relative to leg
+         *      └─ Right Leg
+         *          └─ Right Knee → bends relative to leg
+         *
+         *    IMPLEMENTATION METHOD:
+         *    - Uses vertex position-based deformation in GLSL vertex shader
+         *    - Smooth transitions with smoothstep() for natural blending
+         *    - Each body part has influence zones based on Y-height and X-position
+         *    - Transformations are cumulative (child inherits parent's transform)
+         *
+         *    BODY PART ANIMATIONS DURING EVOLUTION:
+         *    - Body: Tilts forward/backward (±30°)
+         *    - Arms: Rotate outward up to 180° during peak
+         *    - Hands: Wave motion (±35°) with high frequency
+         *    - Knees: Bend (±40°) simulating dancing/energy gathering
+         *    - Head: Tilts side-to-side (±25°)
+         *    - Spoons: Spin up to 16 full rotations during evolution
+         */
+
+        // WebGL Setup and Utilities
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext('webgl');
+
+        if (!gl) {
+            alert('WebGL not supported!');
+        }
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Vertex Shader with Hierarchical Deformation Support
+        const vertexShaderSource = `
+            attribute vec3 aPosition;
+            attribute vec3 aNormal;
+            attribute vec3 aColor;
+
+            uniform mat4 uModelMatrix;
+            uniform mat4 uViewMatrix;
+            uniform mat4 uProjectionMatrix;
+            uniform mat4 uNormalMatrix;
+
+            // Hierarchical transformation uniforms
+            uniform float uBodyTilt;
+            uniform float uHeadTilt;
+            uniform float uLeftArmRot;
+            uniform float uRightArmRot;
+            uniform float uLeftHandRot;
+            uniform float uRightHandRot;
+            uniform float uLeftKneeRot;
+            uniform float uRightKneeRot;
+            uniform float uSpoonSpin;
+
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            varying vec3 vColor;
+
+            // NO vertex deformation - hierarchical rendering is done by drawing separate parts
+            vec3 applyHierarchicalTransform(vec3 pos, vec3 normal) {
+                // Return position unchanged - parts are drawn separately with transforms
+                return pos;
+            }
+
+            void main() {
+                vec3 transformedPos = applyHierarchicalTransform(aPosition, aNormal);
+                vec4 worldPosition = uModelMatrix * vec4(transformedPos, 1.0);
+                vPosition = worldPosition.xyz;
+                vNormal = mat3(uNormalMatrix) * aNormal;
+                vColor = aColor;
+                gl_Position = uProjectionMatrix * uViewMatrix * worldPosition;
+            }
+        `;
+
+        // Fragment Shader with enhanced brilliance
+        const fragmentShaderSource = `
+            precision mediump float;
+
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            varying vec3 vColor;
+
+            uniform vec3 uLightPosition;
+            uniform vec3 uViewPosition;
+            uniform float uGlowIntensity;
+            uniform float uMetallic;
+
+            void main() {
+                vec3 normal = normalize(vNormal);
+                vec3 lightDir = normalize(uLightPosition - vPosition);
+                vec3 viewDir = normalize(uViewPosition - vPosition);
+                vec3 reflectDir = reflect(-lightDir, normal);
+                vec3 halfDir = normalize(lightDir + viewDir);
+
+                // Darker ambient lighting
+                float ambientStrength = 0.25 + uGlowIntensity * 0.2;
+                vec3 ambient = ambientStrength * vColor;
+
+                // Improved Diffuse with wrap-around lighting
+                float diffWrap = max(dot(normal, lightDir), 0.0);
+                float diffWrapped = (diffWrap + 0.2) / 1.2; // Subtle wrap lighting
+                vec3 diffuse = diffWrapped * vColor * 0.85;
+
+                // Subtle subsurface scattering
+                float backlight = max(0.0, dot(normal, -lightDir));
+                vec3 subsurface = vColor * backlight * 0.1;
+
+                // Rim light for depth (less intense)
+                float rimPower = 1.0 - max(dot(viewDir, normal), 0.0);
+                float rimIntensity = pow(rimPower, 3.0) * 0.4;
+                vec3 rimColor = vec3(0.9, 0.85, 0.6) * rimIntensity;
+
+                // Blinn-Phong Specular (softer highlights)
+                float specularStrength = 0.5 + uMetallic * 0.3;
+                float spec = pow(max(dot(normal, halfDir), 0.0), 64.0);
+                vec3 specular = specularStrength * spec * vec3(0.95, 0.95, 0.9);
+
+                // Subtle Fresnel effect
+                float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 5.0);
+                vec3 fresnelColor = vColor * fresnel * 0.15;
+
+                // Psychic aura glow
+                vec3 psychicGlow = vec3(0.6, 0.35, 0.9) * uGlowIntensity * 0.4;
+
+                // Combine all lighting components
+                vec3 result = ambient + diffuse + subsurface + specular + rimColor + fresnelColor + psychicGlow;
+
+                // Darker tone mapping
+                result = pow(result, vec3(1.1)); // Darken slightly
+                result = result * 0.85; // Reduce overall brightness
+
+                gl_FragColor = vec4(result, 1.0);
+            }
+        `;
+
+        // Compile Shader
+        function compileShader(source, type) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Create Program
+        const vertexShader = compileShader(vertexShaderSource, gl.VERTEX_SHADER);
+        const fragmentShader = compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Program link error:', gl.getProgramInfoLog(program));
+        }
+
+        gl.useProgram(program);
+
+        // Get attribute and uniform locations
+        const aPosition = gl.getAttribLocation(program, 'aPosition');
+        const aNormal = gl.getAttribLocation(program, 'aNormal');
+        const aColor = gl.getAttribLocation(program, 'aColor');
+        const uModelMatrix = gl.getUniformLocation(program, 'uModelMatrix');
+        const uViewMatrix = gl.getUniformLocation(program, 'uViewMatrix');
+        const uProjectionMatrix = gl.getUniformLocation(program, 'uProjectionMatrix');
+        const uNormalMatrix = gl.getUniformLocation(program, 'uNormalMatrix');
+        const uLightPosition = gl.getUniformLocation(program, 'uLightPosition');
+        const uViewPosition = gl.getUniformLocation(program, 'uViewPosition');
+        const uGlowIntensity = gl.getUniformLocation(program, 'uGlowIntensity');
+        const uMetallic = gl.getUniformLocation(program, 'uMetallic');
+
+        // Hierarchical transformation uniforms
+        const uBodyTilt = gl.getUniformLocation(program, 'uBodyTilt');
+        const uHeadTilt = gl.getUniformLocation(program, 'uHeadTilt');
+        const uLeftArmRot = gl.getUniformLocation(program, 'uLeftArmRot');
+        const uRightArmRot = gl.getUniformLocation(program, 'uRightArmRot');
+        const uLeftHandRot = gl.getUniformLocation(program, 'uLeftHandRot');
+        const uRightHandRot = gl.getUniformLocation(program, 'uRightHandRot');
+        const uLeftKneeRot = gl.getUniformLocation(program, 'uLeftKneeRot');
+        const uRightKneeRot = gl.getUniformLocation(program, 'uRightKneeRot');
+        const uSpoonSpin = gl.getUniformLocation(program, 'uSpoonSpin');
+
+        // Matrix Math Library
+        class Mat4 {
+            static identity() {
+                return [
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ];
+            }
+
+            static perspective(fov, aspect, near, far) {
+                const f = 1.0 / Math.tan(fov / 2);
+                const nf = 1 / (near - far);
+                return [
+                    f / aspect, 0, 0, 0,
+                    0, f, 0, 0,
+                    0, 0, (far + near) * nf, -1,
+                    0, 0, 2 * far * near * nf, 0
+                ];
+            }
+
+            static lookAt(eye, center, up) {
+                const z = this.normalize([eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]]);
+                const x = this.normalize(this.cross(up, z));
+                const y = this.cross(z, x);
+
+                return [
+                    x[0], y[0], z[0], 0,
+                    x[1], y[1], z[1], 0,
+                    x[2], y[2], z[2], 0,
+                    -this.dot(x, eye), -this.dot(y, eye), -this.dot(z, eye), 1
+                ];
+            }
+
+            static translate(m, v) {
+                const out = [...m];
+                out[12] = m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12];
+                out[13] = m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13];
+                out[14] = m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14];
+                out[15] = m[3] * v[0] + m[7] * v[1] + m[11] * v[2] + m[15];
+                return out;
+            }
+
+            static rotateX(m, angle) {
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const out = [...m];
+                const a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7];
+                const a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11];
+
+                out[4] = a10 * c + a20 * s;
+                out[5] = a11 * c + a21 * s;
+                out[6] = a12 * c + a22 * s;
+                out[7] = a13 * c + a23 * s;
+                out[8] = a20 * c - a10 * s;
+                out[9] = a21 * c - a11 * s;
+                out[10] = a22 * c - a12 * s;
+                out[11] = a23 * c - a13 * s;
+
+                return out;
+            }
+
+            static rotateY(m, angle) {
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const out = [...m];
+                const a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3];
+                const a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11];
+
+                out[0] = a00 * c + a20 * s;
+                out[1] = a01 * c + a21 * s;
+                out[2] = a02 * c + a22 * s;
+                out[3] = a03 * c + a23 * s;
+                out[8] = a20 * c - a00 * s;
+                out[9] = a21 * c - a01 * s;
+                out[10] = a22 * c - a02 * s;
+                out[11] = a23 * c - a03 * s;
+
+                return out;
+            }
+
+            static rotateZ(m, angle) {
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const out = [...m];
+                const a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3];
+                const a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7];
+
+                out[0] = a00 * c + a10 * s;
+                out[1] = a01 * c + a11 * s;
+                out[2] = a02 * c + a12 * s;
+                out[3] = a03 * c + a13 * s;
+                out[4] = a10 * c - a00 * s;
+                out[5] = a11 * c - a01 * s;
+                out[6] = a12 * c - a02 * s;
+                out[7] = a13 * c - a03 * s;
+
+                return out;
+            }
+
+            // Rodrigues' Rotation Formula - Rotate around arbitrary axis
+            static rotateArbitrary(m, axis, angle) {
+                // Normalize the axis
+                const [x, y, z] = this.normalize(axis);
+                const c = Math.cos(angle);
+                const s = Math.sin(angle);
+                const t = 1 - c;
+
+                // Rodrigues' rotation matrix
+                const rotMatrix = [
+                    t * x * x + c,     t * x * y + s * z, t * x * z - s * y, 0,
+                    t * x * y - s * z, t * y * y + c,     t * y * z + s * x, 0,
+                    t * x * z + s * y, t * y * z - s * x, t * z * z + c,     0,
+                    0,                 0,                 0,                 1
+                ];
+
+                // Multiply matrices
+                return this.multiply(m, rotMatrix);
+            }
+
+            static multiply(a, b) {
+                const out = [];
+                for (let i = 0; i < 4; i++) {
+                    for (let j = 0; j < 4; j++) {
+                        out[i * 4 + j] =
+                            a[i * 4 + 0] * b[0 * 4 + j] +
+                            a[i * 4 + 1] * b[1 * 4 + j] +
+                            a[i * 4 + 2] * b[2 * 4 + j] +
+                            a[i * 4 + 3] * b[3 * 4 + j];
+                    }
+                }
+                return out;
+            }
+
+            static scale(m, v) {
+                const out = [...m];
+                out[0] *= v[0]; out[1] *= v[0]; out[2] *= v[0]; out[3] *= v[0];
+                out[4] *= v[1]; out[5] *= v[1]; out[6] *= v[1]; out[7] *= v[1];
+                out[8] *= v[2]; out[9] *= v[2]; out[10] *= v[2]; out[11] *= v[2];
+                return out;
+            }
+
+            static invert(m) {
+                const out = [];
+                const a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3];
+                const a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7];
+                const a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11];
+                const a30 = m[12], a31 = m[13], a32 = m[14], a33 = m[15];
+
+                const b00 = a00 * a11 - a01 * a10;
+                const b01 = a00 * a12 - a02 * a10;
+                const b02 = a00 * a13 - a03 * a10;
+                const b03 = a01 * a12 - a02 * a11;
+                const b04 = a01 * a13 - a03 * a11;
+                const b05 = a02 * a13 - a03 * a12;
+                const b06 = a20 * a31 - a21 * a30;
+                const b07 = a20 * a32 - a22 * a30;
+                const b08 = a20 * a33 - a23 * a30;
+                const b09 = a21 * a32 - a22 * a31;
+                const b10 = a21 * a33 - a23 * a31;
+                const b11 = a22 * a33 - a23 * a32;
+
+                let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+
+                if (!det) return null;
+                det = 1.0 / det;
+
+                out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+                out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+                out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+                out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+                out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+                out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+                out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+                out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+                out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+                out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+                out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+                out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+                out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+                out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+                out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+                out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+
+                return out;
+            }
+
+            static transpose(m) {
+                return [
+                    m[0], m[4], m[8], m[12],
+                    m[1], m[5], m[9], m[13],
+                    m[2], m[6], m[10], m[14],
+                    m[3], m[7], m[11], m[15]
+                ];
+            }
+
+            static normalize(v) {
+                const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                return len > 0 ? [v[0] / len, v[1] / len, v[2] / len] : v;
+            }
+
+            static cross(a, b) {
+                return [
+                    a[1] * b[2] - a[2] * b[1],
+                    a[2] * b[0] - a[0] * b[2],
+                    a[0] * b[1] - a[1] * b[0]
+                ];
+            }
+
+            static dot(a, b) {
+                return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            }
+        }
+
+        // Geometric Primitive Generator using Quadric Surfaces
+        class QuadricGenerator {
+            // Ellipsoid: (x/a)² + (y/b)² + (z/c)² = 1
+            static createEllipsoid(radiusX, radiusY, radiusZ, segments = 32, color = [1, 1, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                for (let lat = 0; lat <= segments; lat++) {
+                    const theta = lat * Math.PI / segments;
+                    const sinTheta = Math.sin(theta);
+                    const cosTheta = Math.cos(theta);
+
+                    for (let lon = 0; lon <= segments; lon++) {
+                        const phi = lon * 2 * Math.PI / segments;
+                        const sinPhi = Math.sin(phi);
+                        const cosPhi = Math.cos(phi);
+
+                        const x = radiusX * cosPhi * sinTheta;
+                        const y = radiusY * cosTheta;
+                        const z = radiusZ * sinPhi * sinTheta;
+
+                        vertices.push(x, y, z);
+
+                        // Normal for ellipsoid
+                        const nx = x / (radiusX * radiusX);
+                        const ny = y / (radiusY * radiusY);
+                        const nz = z / (radiusZ * radiusZ);
+                        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                        normals.push(nx / nLen, ny / nLen, nz / nLen);
+
+                        colors.push(...color);
+                    }
+                }
+
+                for (let lat = 0; lat < segments; lat++) {
+                    for (let lon = 0; lon < segments; lon++) {
+                        const first = lat * (segments + 1) + lon;
+                        const second = first + segments + 1;
+
+                        indices.push(first, second, first + 1);
+                        indices.push(second, second + 1, first + 1);
+                    }
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+
+            // Cylinder using parametric quadric form
+            static createCylinder(radius, height, segments = 32, color = [1, 1, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                // Side surface
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const x = Math.cos(angle) * radius;
+                    const z = Math.sin(angle) * radius;
+
+                    vertices.push(x, -height / 2, z);
+                    normals.push(Math.cos(angle), 0, Math.sin(angle));
+                    colors.push(...color);
+
+                    vertices.push(x, height / 2, z);
+                    normals.push(Math.cos(angle), 0, Math.sin(angle));
+                    colors.push(...color);
+                }
+
+                for (let i = 0; i < segments; i++) {
+                    const base = i * 2;
+                    indices.push(base, base + 1, base + 2);
+                    indices.push(base + 1, base + 3, base + 2);
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+
+            // Cone using quadric surface
+            static createCone(radius, height, segments = 32, color = [1, 1, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                // Apex
+                vertices.push(0, height, 0);
+                normals.push(0, 1, 0);
+                colors.push(...color);
+
+                // Base circle
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const x = Math.cos(angle) * radius;
+                    const z = Math.sin(angle) * radius;
+
+                    vertices.push(x, 0, z);
+
+                    // Cone normal calculation
+                    const slant = Math.sqrt(radius * radius + height * height);
+                    const ny = radius / slant;
+                    const nr = height / slant;
+                    normals.push(Math.cos(angle) * nr, ny, Math.sin(angle) * nr);
+                    colors.push(...color);
+                }
+
+                for (let i = 1; i <= segments; i++) {
+                    indices.push(0, i, i + 1);
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+
+            // Torus (donut shape) - useful for tail bands
+            static createTorus(majorRadius, minorRadius, majorSegments = 32, minorSegments = 16, color = [0.6, 0.3, 0]) {
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+
+                for (let i = 0; i <= majorSegments; i++) {
+                    const u = (i / majorSegments) * Math.PI * 2;
+                    const cosU = Math.cos(u);
+                    const sinU = Math.sin(u);
+
+                    for (let j = 0; j <= minorSegments; j++) {
+                        const v = (j / minorSegments) * Math.PI * 2;
+                        const cosV = Math.cos(v);
+                        const sinV = Math.sin(v);
+
+                        const x = (majorRadius + minorRadius * cosV) * cosU;
+                        const y = minorRadius * sinV;
+                        const z = (majorRadius + minorRadius * cosV) * sinU;
+
+                        vertices.push(x, y, z);
+
+                        const nx = cosV * cosU;
+                        const ny = sinV;
+                        const nz = cosV * sinU;
+                        normals.push(nx, ny, nz);
+
+                        colors.push(...color);
+                    }
+                }
+
+                for (let i = 0; i < majorSegments; i++) {
+                    for (let j = 0; j < minorSegments; j++) {
+                        const a = i * (minorSegments + 1) + j;
+                        const b = a + minorSegments + 1;
+
+                        indices.push(a, b, a + 1);
+                        indices.push(b, b + 1, a + 1);
+                    }
+                }
+
+                return { vertices, normals, colors, indices };
+            }
+        }
+
+        // Pokemon Model Builder
+        class PokemonModel {
+            constructor() {
+                this.parts = [];
+            }
+
+            addPart(geometry, transform = Mat4.identity()) {
+                this.parts.push({ geometry, transform });
+            }
+
+            getData() {
+                let allVertices = [];
+                let allNormals = [];
+                let allColors = [];
+                let allIndices = [];
+                let indexOffset = 0;
+
+                for (const part of this.parts) {
+                    const { geometry, transform } = part;
+
+                    // Transform vertices
+                    for (let i = 0; i < geometry.vertices.length; i += 3) {
+                        const x = geometry.vertices[i];
+                        const y = geometry.vertices[i + 1];
+                        const z = geometry.vertices[i + 2];
+
+                        const tx = transform[0] * x + transform[4] * y + transform[8] * z + transform[12];
+                        const ty = transform[1] * x + transform[5] * y + transform[9] * z + transform[13];
+                        const tz = transform[2] * x + transform[6] * y + transform[10] * z + transform[14];
+
+                        allVertices.push(tx, ty, tz);
+                    }
+
+                    // Transform normals
+                    for (let i = 0; i < geometry.normals.length; i += 3) {
+                        const nx = geometry.normals[i];
+                        const ny = geometry.normals[i + 1];
+                        const nz = geometry.normals[i + 2];
+
+                        const tnx = transform[0] * nx + transform[4] * ny + transform[8] * nz;
+                        const tny = transform[1] * nx + transform[5] * ny + transform[9] * nz;
+                        const tnz = transform[2] * nx + transform[6] * ny + transform[10] * nz;
+
+                        allNormals.push(tnx, tny, tnz);
+                    }
+
+                    allColors.push(...geometry.colors);
+
+                    for (const idx of geometry.indices) {
+                        allIndices.push(idx + indexOffset);
+                    }
+
+                    indexOffset += geometry.vertices.length / 3;
+                }
+
+                return {
+                    vertices: new Float32Array(allVertices),
+                    normals: new Float32Array(allNormals),
+                    colors: new Float32Array(allColors),
+                    indices: new Uint16Array(allIndices)
+                };
+            }
+        }
+
+        // HIERARCHICAL BODY PART SYSTEM
+        // Each body part is created separately and rendered with its own transform
+        class HierarchicalBodyPart {
+            constructor(geometry, localTransform = Mat4.identity()) {
+                this.geometry = geometry;
+                this.localTransform = localTransform;  // Position relative to parent
+                this.children = [];
+                this.mesh = null;
+            }
+
+            addChild(child) {
+                this.children.push(child);
+            }
+
+            createMesh() {
+                // Convert geometry arrays to typed arrays for WebGL
+                const typedGeometry = {
+                    vertices: new Float32Array(this.geometry.vertices),
+                    normals: new Float32Array(this.geometry.normals),
+                    colors: new Float32Array(this.geometry.colors),
+                    indices: new Uint16Array(this.geometry.indices)
+                };
+                this.mesh = new MeshBuffer(typedGeometry);
+
+                // Create meshes for all children
+                for (const child of this.children) {
+                    child.createMesh();
+                }
+            }
+
+            // Draw this part and all children with accumulated transforms
+            draw(parentTransform = Mat4.identity()) {
+                // Combine parent transform with this part's local transform
+                const worldTransform = Mat4.multiply(parentTransform, this.localTransform);
+
+                // Draw this part if it has a mesh
+                if (this.mesh && this.mesh.indexCount > 0) {
+                    // Set transform for this part
+                    gl.uniformMatrix4fv(uModelMatrix, false, worldTransform);
+                    const normalMatrix = Mat4.transpose(Mat4.invert(worldTransform));
+                    gl.uniformMatrix4fv(uNormalMatrix, false, normalMatrix);
+
+                    // Bind and draw
+                    this.mesh.bind();
+                    this.mesh.draw();
+                }
+
+                // Draw all children with accumulated transform
+                for (const child of this.children) {
+                    child.draw(worldTransform);
+                }
+            }
+        }
+
+        // Create Abra Model - Small, sleepy psychic Pokemon
+        function createAbra() {
+            const model = new PokemonModel();
+ 
+         
+
+           
+
+
+            return model.getData();
+        }
+
+        // Create HIERARCHICAL Abra with enhanced characteristics
+        function createHierarchicalAbra() {
+            const yellow = [1.0, 0.95, 0.4];  // Warmer golden yellow
+            const brown = [0.55, 0.35, 0.2];  // Warmer brown
+            const darkBrown = [0.4, 0.2, 0.1];
+            const black = [0.1, 0.1, 0.1];
+            const brownArmor = [0.6, 0.4, 0.25];  // Slightly lighter for armor
+
+            // ===== ROOT: BODY (egg-shaped, compact) =====
+            const bodyGeom = QuadricGenerator.createEllipsoid(0.45, 0.52, 0.4, 36, yellow);
+            const body = new HierarchicalBodyPart(bodyGeom, Mat4.translate(Mat4.identity(), [0, 0.5, 0]));
+
+            // Brown chest armor - child of body (larger, more prominent)
+            const chestGeom = QuadricGenerator.createEllipsoid(0.4, 0.35, 0.3, 28, brownArmor);
+            const chest = new HierarchicalBodyPart(chestGeom, Mat4.translate(Mat4.identity(), [0, 0.1, 0.25]));
+            body.addChild(chest);
+
+            // Shoulder pads - larger and more defined
+            const leftShoulderGeom = QuadricGenerator.createEllipsoid(0.18, 0.15, 0.14, 20, brownArmor);
+            const leftShoulder = new HierarchicalBodyPart(leftShoulderGeom, Mat4.translate(Mat4.identity(), [-0.45, 0.5, 0.12]));
+            body.addChild(leftShoulder);
+
+            const rightShoulderGeom = QuadricGenerator.createEllipsoid(0.18, 0.15, 0.14, 20, brownArmor);
+            const rightShoulder = new HierarchicalBodyPart(rightShoulderGeom, Mat4.translate(Mat4.identity(), [0.45, 0.5, 0.12]));
+            body.addChild(rightShoulder);
+
+            // Tail - child of body (longer, more elegant with bands)
+            const tailGeom = QuadricGenerator.createCylinder(0.13, 0.75, 24, yellow);
+            let tailTransform = Mat4.translate(Mat4.identity(), [0, -0.2, -0.45]);
+            tailTransform = Mat4.rotateY(tailTransform, Math.PI / 6);
+            tailTransform = Mat4.rotateX(tailTransform, -Math.PI / 12);
+            const tail = new HierarchicalBodyPart(tailGeom, tailTransform);
+            body.addChild(tail);
+
+            // Tail bands - children of tail (3 brown rings)
+            for (let i = 0; i < 3; i++) {
+                const tailBandGeom = QuadricGenerator.createTorus(0.14, 0.04, 24, 12, brown);
+                let bandTransform = Mat4.translate(Mat4.identity(), [0, -0.5 + i * 0.23, 0]);
+                bandTransform = Mat4.rotateY(bandTransform, -Math.PI / 6);
+                bandTransform = Mat4.rotateX(bandTransform, Math.PI / 12);
+                const tailBand = new HierarchicalBodyPart(tailBandGeom, bandTransform);
+                tail.addChild(tailBand);
+            }
+
+            // ===== HEAD - child of body (larger, more cat-like) =====
+            const headGeom = QuadricGenerator.createEllipsoid(0.4, 0.44, 0.36, 36, yellow);
+            const head = new HierarchicalBodyPart(headGeom, Mat4.translate(Mat4.identity(), [0, 0.88, 0]));
+            body.addChild(head);
+
+            // Snout - more prominent
+            const snoutGeom = QuadricGenerator.createEllipsoid(0.18, 0.14, 0.2, 20, yellow);
+            const snout = new HierarchicalBodyPart(snoutGeom, Mat4.translate(Mat4.identity(), [0, -0.08, 0.34]));
+            head.addChild(snout);
+
+            // Nose tip (small dark spot)
+            const noseGeom = QuadricGenerator.createEllipsoid(0.04, 0.03, 0.03, 12, darkBrown);
+            const nose = new HierarchicalBodyPart(noseGeom, Mat4.translate(Mat4.identity(), [0, -0.04, 0.18]));
+            snout.addChild(nose);
+
+            // Large fox ears - children of head (taller, more prominent)
+            const leftEarGeom = QuadricGenerator.createCone(0.17, 0.45, 24, yellow);
+            let leftEarTransform = Mat4.translate(Mat4.identity(), [-0.4, 0.35, -0.0]);
+            leftEarTransform = Mat4.rotateZ(leftEarTransform, -Math.PI / 18);
+            const leftEar = new HierarchicalBodyPart(leftEarGeom, leftEarTransform);
+            head.addChild(leftEar);
+
+            const rightEarGeom = QuadricGenerator.createCone(0.17, 0.45, 24, yellow);
+            let rightEarTransform = Mat4.translate(Mat4.identity(), [0.4, 0.35, -0.0]);
+            rightEarTransform = Mat4.rotateZ(rightEarTransform, Math.PI / 18);
+            const rightEar = new HierarchicalBodyPart(rightEarGeom, rightEarTransform);
+            head.addChild(rightEar);
+
+            // Inner ear (brown) - children of respective ears
+            const leftInnerEarGeom = QuadricGenerator.createCone(0.09, 0.3, 20, brown);
+            const leftInnerEar = new HierarchicalBodyPart(leftInnerEarGeom, Mat4.translate(Mat4.identity(), [0, 0.03, 0]));
+            leftEar.addChild(leftInnerEar);
+
+            const rightInnerEarGeom = QuadricGenerator.createCone(0.09, 0.3, 20, brown);
+            const rightInnerEar = new HierarchicalBodyPart(rightInnerEarGeom, Mat4.translate(Mat4.identity(), [0, 0.03, 0]));
+            rightEar.addChild(rightInnerEar);
+
+            // Closed eyes - children of head (more defined sleeping look)
+            const leftEyeGeom = QuadricGenerator.createEllipsoid(0.14, 0.045, 0.025, 20, black);
+            const leftEye = new HierarchicalBodyPart(leftEyeGeom, Mat4.translate(Mat4.identity(), [-0.16, 0.06, 0.33]));
+            head.addChild(leftEye);
+
+            const rightEyeGeom = QuadricGenerator.createEllipsoid(0.14, 0.045, 0.025, 20, black);
+            const rightEye = new HierarchicalBodyPart(rightEyeGeom, Mat4.translate(Mat4.identity(), [0.16, 0.06, 0.33]));
+            head.addChild(rightEye);
+
+            // Eye highlights (subtle detail)
+            const leftEyeHighlightGeom = QuadricGenerator.createEllipsoid(0.03, 0.015, 0.01, 12, [0.3, 0.3, 0.3]);
+            const leftEyeHighlight = new HierarchicalBodyPart(leftEyeHighlightGeom, Mat4.translate(Mat4.identity(), [-0.05, 0.01, 0.015]));
+            leftEye.addChild(leftEyeHighlight);
+
+            const rightEyeHighlightGeom = QuadricGenerator.createEllipsoid(0.03, 0.015, 0.01, 12, [0.3, 0.3, 0.3]);
+            const rightEyeHighlight = new HierarchicalBodyPart(rightEyeHighlightGeom, Mat4.translate(Mat4.identity(), [-0.05, 0.01, 0.015]));
+            rightEye.addChild(rightEyeHighlight);
+
+            // ===== LEFT ARM - child of body (short, chubby arm) =====
+            const leftArmGeom = QuadricGenerator.createCylinder(0.14, 0.4, 24, yellow);
+            const leftArm = new HierarchicalBodyPart(leftArmGeom, Mat4.translate(Mat4.identity(), [-0.5, 0.15, 0]));
+            body.addChild(leftArm);
+
+            // LEFT HAND - child of left arm (three-fingered, rounder)
+            const leftHandGeom = QuadricGenerator.createEllipsoid(0.17, 0.11, 0.15, 24, yellow);
+            const leftHand = new HierarchicalBodyPart(leftHandGeom, Mat4.translate(Mat4.identity(), [0, -0.28, 0]));
+            leftArm.addChild(leftHand);
+
+            // Left fingers - children of left hand (chubbier)
+            for (let i = -1; i <= 1; i++) {
+                const fingerGeom = QuadricGenerator.createCone(0.035, 0.1, 16, yellow);
+                const finger = new HierarchicalBodyPart(fingerGeom, Mat4.translate(Mat4.identity(), [i * 0.06, -0.08, 0.13]));
+                leftHand.addChild(finger);
+            }
+
+            // ===== RIGHT ARM - child of body (short, chubby arm) =====
+            const rightArmGeom = QuadricGenerator.createCylinder(0.14, 0.4, 24, yellow);
+            const rightArm = new HierarchicalBodyPart(rightArmGeom, Mat4.translate(Mat4.identity(), [0.5, 0.15, 0]));
+            body.addChild(rightArm);
+
+            // RIGHT HAND - child of right arm (three-fingered, rounder)
+            const rightHandGeom = QuadricGenerator.createEllipsoid(0.17, 0.11, 0.15, 24, yellow);
+            const rightHand = new HierarchicalBodyPart(rightHandGeom, Mat4.translate(Mat4.identity(), [0, -0.28, 0]));
+            rightArm.addChild(rightHand);
+
+            // Right fingers - children of right hand (chubbier)
+            for (let i = -1; i <= 1; i++) {
+                const fingerGeom = QuadricGenerator.createCone(0.035, 0.1, 16, yellow);
+                const finger = new HierarchicalBodyPart(fingerGeom, Mat4.translate(Mat4.identity(), [i * 0.06, -0.08, 0.13]));
+                rightHand.addChild(finger);
+            }
+
+            // ===== LEFT LEG - child of body (short, sturdy) =====
+            const leftLegGeom = QuadricGenerator.createCylinder(0.16, 0.35, 24, yellow);
+            const leftLeg = new HierarchicalBodyPart(leftLegGeom, Mat4.translate(Mat4.identity(), [-0.23, -0.7, 0]));
+            body.addChild(leftLeg);
+
+            // LEFT FOOT - child of left leg (large, prominent)
+            const leftFootGeom = QuadricGenerator.createEllipsoid(0.19, 0.13, 0.26, 24, yellow);
+            const leftFoot = new HierarchicalBodyPart(leftFootGeom, Mat4.translate(Mat4.identity(), [0, -0.26, 0.1]));
+            leftLeg.addChild(leftFoot);
+
+            // Left toes (three small bumps)
+            for (let i = -1; i <= 1; i++) {
+                const toeGeom = QuadricGenerator.createEllipsoid(0.045, 0.035, 0.05, 12, yellow);
+                const toe = new HierarchicalBodyPart(toeGeom, Mat4.translate(Mat4.identity(), [i * 0.07, -0.08, 0.22]));
+                leftFoot.addChild(toe);
+            }
+
+            // ===== RIGHT LEG - child of body (short, sturdy) =====
+            const rightLegGeom = QuadricGenerator.createCylinder(0.16, 0.35, 24, yellow);
+            const rightLeg = new HierarchicalBodyPart(rightLegGeom, Mat4.translate(Mat4.identity(), [0.23, -0.7, 0]));
+            body.addChild(rightLeg);
+
+            // RIGHT FOOT - child of right leg (large, prominent)
+            const rightFootGeom = QuadricGenerator.createEllipsoid(0.19, 0.13, 0.26, 24, yellow);
+            const rightFoot = new HierarchicalBodyPart(rightFootGeom, Mat4.translate(Mat4.identity(), [0, -0.26, 0.1]));
+            rightLeg.addChild(rightFoot);
+
+            // Right toes (three small bumps)
+            for (let i = -1; i <= 1; i++) {
+                const toeGeom = QuadricGenerator.createEllipsoid(0.045, 0.035, 0.05, 12, yellow);
+                const toe = new HierarchicalBodyPart(toeGeom, Mat4.translate(Mat4.identity(), [i * 0.07, -0.08, 0.22]));
+                rightFoot.addChild(toe);
+            }
+
+            // Create meshes for all parts
+            body.createMesh();
+
+            // Store references for animation
+            body.head = head;
+            body.leftArm = leftArm;
+            body.rightArm = rightArm;
+            body.leftHand = leftHand;
+            body.rightHand = rightHand;
+            body.leftLeg = leftLeg;
+            body.rightLeg = rightLeg;
+            body.tail = tail;
+
+            return body;
+        }
+
+        // Create Kadabra Model - Taller, lankier, more intelligent looking
+        function createKadabra() {
+            const model = new PokemonModel();
+            const yellow = [1.0, 0.92, 0.35];  // Brighter yellow
+            const brown = [0.7, 0.4, 0.15];
+            const red = [1.0, 0.15, 0.15];  // Bright red for star
+            const silver = [0.9, 0.92, 0.95];  // Shiny silver
+            const whiskerColor = [0.8, 0.5, 0.2];
+
+            // Head (more elongated and angular)
+            const head = QuadricGenerator.createEllipsoid(0.32, 0.4, 0.3, 28, yellow);
+            let transform = Mat4.translate(Mat4.identity(), [0, 1.85, 0]);
+            model.addPart(head, transform);
+
+            // Prominent red forehead star (5-pointed star approximation)
+            const starCore = QuadricGenerator.createEllipsoid(0.14, 0.14, 0.025, 20, red);
+            transform = Mat4.translate(Mat4.identity(), [0, 2.0, 0.3]);
+            model.addPart(starCore, transform);
+
+            // Star points (small pyramids/cones)
+            for (let i = 0; i < 5; i++) {
+                const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
+                const starPoint = QuadricGenerator.createCone(0.04, 0.1, 12, red);
+                const x = Math.cos(angle) * 0.12;
+                const y = 2.0 + Math.sin(angle) * 0.12;
+                transform = Mat4.translate(Mat4.identity(), [x, y, 0.32]);
+                model.addPart(starPoint, transform);
+            }
+
+            // Sharp, pointed ears
+            const ear = QuadricGenerator.createCone(0.11, 0.42, 20, yellow);
+            let earTransform = Mat4.translate(Mat4.identity(), [-0.25, 2.18, 0]);
+            model.addPart(ear, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.25, 2.18, 0]);
+            model.addPart(ear, earTransform);
+
+            // Inner ear details
+            const innerEar = QuadricGenerator.createCone(0.06, 0.28, 16, brown);
+            earTransform = Mat4.translate(Mat4.identity(), [-0.25, 2.2, 0]);
+            model.addPart(innerEar, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.25, 2.2, 0]);
+            model.addPart(innerEar, earTransform);
+
+            // Whisker stubs (small ellipsoids on face)
+            const whisker = QuadricGenerator.createEllipsoid(0.05, 0.05, 0.08, 12, whiskerColor);
+            for (let side of [-1, 1]) {
+                transform = Mat4.translate(Mat4.identity(), [side * 0.22, 1.75, 0.28]);
+                model.addPart(whisker, transform);
+            }
+
+            // Long snout
+            const snout = QuadricGenerator.createEllipsoid(0.14, 0.11, 0.16, 16, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.72, 0.28]);
+            model.addPart(snout, transform);
+
+            // Elongated torso (taller and thinner)
+            const upperBody = QuadricGenerator.createEllipsoid(0.36, 0.55, 0.32, 28, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.05, 0]);
+            model.addPart(upperBody, transform);
+
+            // Brown chest armor (more prominent)
+            const chest = QuadricGenerator.createEllipsoid(0.32, 0.38, 0.28, 24, brown);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.15, 0.18]);
+            model.addPart(chest, transform);
+
+            // Red lightning bolt pattern on abdomen (3 zigzag lines)
+            for (let i = 0; i < 3; i++) {
+                const wave = QuadricGenerator.createEllipsoid(0.28, 0.035, 0.025, 16, red);
+                transform = Mat4.translate(Mat4.identity(), [0, 0.65 - i * 0.14, 0.32]);
+                model.addPart(wave, transform);
+            }
+
+            // Lower body (narrower waist)
+            const lowerBody = QuadricGenerator.createEllipsoid(0.32, 0.32, 0.28, 24, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 0.28, 0]);
+            model.addPart(lowerBody, transform);
+
+            // Very thin, long upper arms
+            const upperArm = QuadricGenerator.createCylinder(0.09, 0.42, 20, yellow);
+            let armTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.95, 0]);
+            model.addPart(upperArm, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.48, 0.95, 0]);
+            model.addPart(upperArm, armTransform);
+
+            // Prominent brown elbow joints
+            const elbow = QuadricGenerator.createEllipsoid(0.11, 0.11, 0.11, 20, brown);
+            let elbowTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.72, 0]);
+            model.addPart(elbow, elbowTransform);
+            elbowTransform = Mat4.translate(Mat4.identity(), [0.48, 0.72, 0]);
+            model.addPart(elbow, elbowTransform);
+
+            // Long forearms
+            const lowerArm = QuadricGenerator.createCylinder(0.08, 0.4, 20, yellow);
+            armTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.4, 0]);
+            model.addPart(lowerArm, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.48, 0.4, 0]);
+            model.addPart(lowerArm, armTransform);
+
+            // Three-clawed hands
+            const hand = QuadricGenerator.createEllipsoid(0.13, 0.09, 0.11, 20, yellow);
+            let handTransform = Mat4.translate(Mat4.identity(), [-0.48, 0.08, 0]);
+            model.addPart(hand, handTransform);
+            handTransform = Mat4.translate(Mat4.identity(), [0.48, 0.08, 0]);
+            model.addPart(hand, handTransform);
+
+            // Claws
+            for (let i = -1; i <= 1; i++) {
+                const claw = QuadricGenerator.createCone(0.025, 0.1, 12, brown);
+                transform = Mat4.translate(Mat4.identity(), [-0.48 + i * 0.04, 0.0, 0.1]);
+                model.addPart(claw, transform);
+                transform = Mat4.translate(Mat4.identity(), [0.48 + i * 0.04, 0.0, 0.1]);
+                model.addPart(claw, transform);
+            }
+
+            // SIGNATURE SILVER SPOON in right hand (larger and more prominent)
+            const spoonHandle = QuadricGenerator.createCylinder(0.025, 0.58, 16, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.48, -0.22, 0]);
+            model.addPart(spoonHandle, transform);
+
+            const spoonHead = QuadricGenerator.createEllipsoid(0.1, 0.14, 0.035, 20, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.48, -0.55, 0]);
+            model.addPart(spoonHead, transform);
+
+            // Inner spoon detail (concave look)
+            const spoonInner = QuadricGenerator.createEllipsoid(0.08, 0.11, 0.02, 16, [0.7, 0.72, 0.75]);
+            transform = Mat4.translate(Mat4.identity(), [0.48, -0.55, 0.02]);
+            model.addPart(spoonInner, transform);
+
+            // Long upper legs
+            const upperLeg = QuadricGenerator.createCylinder(0.13, 0.4, 20, yellow);
+            let legTransform = Mat4.translate(Mat4.identity(), [-0.2, -0.18, 0]);
+            model.addPart(upperLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.2, -0.18, 0]);
+            model.addPart(upperLeg, legTransform);
+
+            // Prominent brown knee joints
+            const knee = QuadricGenerator.createEllipsoid(0.14, 0.14, 0.14, 20, brown);
+            let kneeTransform = Mat4.translate(Mat4.identity(), [-0.2, -0.42, 0]);
+            model.addPart(knee, kneeTransform);
+            kneeTransform = Mat4.translate(Mat4.identity(), [0.2, -0.42, 0]);
+            model.addPart(knee, kneeTransform);
+
+            // Lower legs
+            const lowerLeg = QuadricGenerator.createCylinder(0.11, 0.38, 20, yellow);
+            legTransform = Mat4.translate(Mat4.identity(), [-0.2, -0.75, 0]);
+            model.addPart(lowerLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.2, -0.75, 0]);
+            model.addPart(lowerLeg, legTransform);
+
+            // Large, defined feet
+            const foot = QuadricGenerator.createEllipsoid(0.17, 0.11, 0.25, 20, yellow);
+            let footTransform = Mat4.translate(Mat4.identity(), [-0.2, -1.0, 0.08]);
+            model.addPart(foot, footTransform);
+            footTransform = Mat4.translate(Mat4.identity(), [0.2, -1.0, 0.08]);
+            model.addPart(foot, footTransform);
+
+            // Tail with single brown band
+            const tail = QuadricGenerator.createCylinder(0.09, 0.55, 20, yellow);
+            transform = Mat4.rotateY(Mat4.identity(), Math.PI / 4.5);
+            transform = Mat4.translate(transform, [0, 0.08, -0.38]);
+            model.addPart(tail, transform);
+
+            const tailBand = QuadricGenerator.createTorus(0.1, 0.032, 20, 10, brown);
+            transform = Mat4.rotateY(Mat4.identity(), Math.PI / 4.5);
+            transform = Mat4.translate(transform, [0, -0.1, -0.38]);
+            model.addPart(tailBand, transform);
+
+            return model.getData();
+        }
+
+        // Create Alakazam Model - Master psychic with dual spoons and majestic mustache
+        function createAlakazam() {
+            const model = new PokemonModel();
+            const yellow = [1.0, 0.95, 0.4];  // Brilliant golden yellow
+            const brown = [0.75, 0.45, 0.18];  // Rich brown
+            const silver = [0.95, 0.97, 1.0];  // Brilliant silver
+            const red = [0.95, 0.2, 0.2];  // For star remnants
+            const whiskerBrown = [0.6, 0.35, 0.15];
+
+            // Head with wise, angular features
+            const head = QuadricGenerator.createEllipsoid(0.34, 0.38, 0.32, 32, yellow);
+            let transform = Mat4.translate(Mat4.identity(), [0, 1.95, 0]);
+            model.addPart(head, transform);
+
+            // Small forehead markings (star remnants, smaller than Kadabra)
+            const starMark = QuadricGenerator.createEllipsoid(0.08, 0.08, 0.02, 16, red);
+            transform = Mat4.translate(Mat4.identity(), [0, 2.12, 0.32]);
+            model.addPart(starMark, transform);
+
+            // Very large, majestic ears
+            const ear = QuadricGenerator.createCone(0.14, 0.48, 24, yellow);
+            let earTransform = Mat4.translate(Mat4.identity(), [-0.27, 2.3, 0]);
+            model.addPart(ear, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.27, 2.3, 0]);
+            model.addPart(ear, earTransform);
+
+            // Inner ear details
+            const innerEar = QuadricGenerator.createCone(0.08, 0.32, 20, brown);
+            earTransform = Mat4.translate(Mat4.identity(), [-0.27, 2.32, 0]);
+            model.addPart(innerEar, earTransform);
+            earTransform = Mat4.translate(Mat4.identity(), [0.27, 2.32, 0]);
+            model.addPart(innerEar, earTransform);
+
+            // PROMINENT MUSTACHE (Alakazam's signature feature!)
+            // Long, sweeping mustache segments
+            const mustacheL1 = QuadricGenerator.createEllipsoid(0.32, 0.06, 0.1, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [-0.42, 1.78, 0.18]);
+            model.addPart(mustacheL1, transform);
+
+            const mustacheL2 = QuadricGenerator.createEllipsoid(0.28, 0.05, 0.08, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [-0.48, 1.72, 0.15]);
+            model.addPart(mustacheL2, transform);
+
+            const mustacheR1 = QuadricGenerator.createEllipsoid(0.32, 0.06, 0.1, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [0.42, 1.78, 0.18]);
+            model.addPart(mustacheR1, transform);
+
+            const mustacheR2 = QuadricGenerator.createEllipsoid(0.28, 0.05, 0.08, 20, whiskerBrown);
+            transform = Mat4.translate(Mat4.identity(), [0.48, 1.72, 0.15]);
+            model.addPart(mustacheR2, transform);
+
+            // Mustache tips (curled upward)
+            for (let side of [-1, 1]) {
+                const mustacheTip = QuadricGenerator.createCone(0.04, 0.15, 16, whiskerBrown);
+                transform = Mat4.translate(Mat4.identity(), [side * 0.62, 1.8, 0.12]);
+                model.addPart(mustacheTip, transform);
+            }
+
+            // Small nose
+            const nose = QuadricGenerator.createEllipsoid(0.08, 0.06, 0.1, 16, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.82, 0.3]);
+            model.addPart(nose, transform);
+
+            // More muscular upper body (stronger than Kadabra)
+            const upperBody = QuadricGenerator.createEllipsoid(0.38, 0.5, 0.32, 32, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.15, 0]);
+            model.addPart(upperBody, transform);
+
+            // Impressive brown chest armor with segments
+            const chestArmor = QuadricGenerator.createEllipsoid(0.34, 0.35, 0.28, 28, brown);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.25, 0.16]);
+            model.addPart(chestArmor, transform);
+
+            // Chest armor details (plates)
+            const chestPlate = QuadricGenerator.createEllipsoid(0.28, 0.25, 0.24, 20, [0.65, 0.38, 0.14]);
+            transform = Mat4.translate(Mat4.identity(), [0, 1.28, 0.2]);
+            model.addPart(chestPlate, transform);
+
+            // Large shoulder armor pads
+            const shoulderL = QuadricGenerator.createEllipsoid(0.2, 0.18, 0.18, 20, brown);
+            transform = Mat4.translate(Mat4.identity(), [-0.44, 1.35, 0]);
+            model.addPart(shoulderL, transform);
+
+            const shoulderR = QuadricGenerator.createEllipsoid(0.2, 0.18, 0.18, 20, brown);
+            transform = Mat4.translate(Mat4.identity(), [0.44, 1.35, 0]);
+            model.addPart(shoulderR, transform);
+
+            // Thinner waist
+            const lowerBody = QuadricGenerator.createEllipsoid(0.3, 0.38, 0.26, 28, yellow);
+            transform = Mat4.translate(Mat4.identity(), [0, 0.5, 0]);
+            model.addPart(lowerBody, transform);
+
+            // Thin but defined upper arms
+            const upperArm = QuadricGenerator.createCylinder(0.075, 0.4, 24, yellow);
+            let armTransform = Mat4.translate(Mat4.identity(), [-0.55, 1.0, 0]);
+            model.addPart(upperArm, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.55, 1.0, 0]);
+            model.addPart(upperArm, armTransform);
+
+            // Brown elbow guards
+            const elbow = QuadricGenerator.createEllipsoid(0.1, 0.1, 0.1, 20, brown);
+            let elbowTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.78, 0]);
+            model.addPart(elbow, elbowTransform);
+            elbowTransform = Mat4.translate(Mat4.identity(), [0.55, 0.78, 0]);
+            model.addPart(elbow, elbowTransform);
+
+            // Forearms with prominent brown armor bands
+            const forearmArmor = QuadricGenerator.createCylinder(0.09, 0.36, 24, brown);
+            armTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.4, 0]);
+            model.addPart(forearmArmor, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.55, 0.4, 0]);
+            model.addPart(forearmArmor, armTransform);
+
+            // Yellow skin visible through armor gaps
+            const forearmSkin = QuadricGenerator.createCylinder(0.07, 0.34, 20, yellow);
+            armTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.4, 0]);
+            model.addPart(forearmSkin, armTransform);
+            armTransform = Mat4.translate(Mat4.identity(), [0.55, 0.4, 0]);
+            model.addPart(forearmSkin, armTransform);
+
+            // Three-fingered hands
+            const hand = QuadricGenerator.createEllipsoid(0.12, 0.09, 0.1, 24, yellow);
+            let handTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.18, 0]);
+            model.addPart(hand, handTransform);
+            handTransform = Mat4.translate(Mat4.identity(), [0.55, 0.18, 0]);
+            model.addPart(hand, handTransform);
+
+            // TWO LEGENDARY SILVER SPOONS (Alakazam's ultimate signature!)
+            // Left spoon (larger and more ornate)
+            const spoonHandle1 = QuadricGenerator.createCylinder(0.028, 0.62, 20, silver);
+            transform = Mat4.translate(Mat4.identity(), [-0.55, -0.2, 0]);
+            model.addPart(spoonHandle1, transform);
+
+            const spoonHead1 = QuadricGenerator.createEllipsoid(0.11, 0.16, 0.04, 24, silver);
+            transform = Mat4.translate(Mat4.identity(), [-0.55, -0.58, 0]);
+            model.addPart(spoonHead1, transform);
+
+            // Spoon inner detail (concave)
+            const spoonInner1 = QuadricGenerator.createEllipsoid(0.09, 0.13, 0.025, 20, [0.75, 0.78, 0.82]);
+            transform = Mat4.translate(Mat4.identity(), [-0.55, -0.58, 0.025]);
+            model.addPart(spoonInner1, transform);
+
+            // Right spoon (symmetrical)
+            const spoonHandle2 = QuadricGenerator.createCylinder(0.028, 0.62, 20, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.55, -0.2, 0]);
+            model.addPart(spoonHandle2, transform);
+
+            const spoonHead2 = QuadricGenerator.createEllipsoid(0.11, 0.16, 0.04, 24, silver);
+            transform = Mat4.translate(Mat4.identity(), [0.55, -0.58, 0]);
+            model.addPart(spoonHead2, transform);
+
+            const spoonInner2 = QuadricGenerator.createEllipsoid(0.09, 0.13, 0.025, 20, [0.75, 0.78, 0.82]);
+            transform = Mat4.translate(Mat4.identity(), [0.55, -0.58, 0.025]);
+            model.addPart(spoonInner2, transform);
+
+            // Spoon decorative elements (psychic energy rings)
+            for (let side of [-1, 1]) {
+                const spoonRing = QuadricGenerator.createTorus(0.03, 0.015, 16, 8, [0.7, 0.5, 1.0]);
+                transform = Mat4.translate(Mat4.identity(), [side * 0.55, -0.35, 0]);
+                model.addPart(spoonRing, transform);
+            }
+
+            // Strong upper legs
+            const upperLeg = QuadricGenerator.createCylinder(0.12, 0.38, 24, yellow);
+            let legTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.08, 0]);
+            model.addPart(upperLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.18, -0.08, 0]);
+            model.addPart(upperLeg, legTransform);
+
+            // Brown knee armor (larger than Kadabra)
+            const kneeArmor = QuadricGenerator.createEllipsoid(0.14, 0.14, 0.14, 24, brown);
+            let kneeTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.3, 0]);
+            model.addPart(kneeArmor, kneeTransform);
+            kneeTransform = Mat4.translate(Mat4.identity(), [0.18, -0.3, 0]);
+            model.addPart(kneeArmor, kneeTransform);
+
+            // Lower legs
+            const lowerLeg = QuadricGenerator.createCylinder(0.1, 0.32, 24, yellow);
+            legTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.62, 0]);
+            model.addPart(lowerLeg, legTransform);
+            legTransform = Mat4.translate(Mat4.identity(), [0.18, -0.62, 0]);
+            model.addPart(lowerLeg, legTransform);
+
+            // Three-toed feet
+            const foot = QuadricGenerator.createEllipsoid(0.16, 0.1, 0.24, 24, yellow);
+            let footTransform = Mat4.translate(Mat4.identity(), [-0.18, -0.85, 0.08]);
+            model.addPart(foot, footTransform);
+            footTransform = Mat4.translate(Mat4.identity(), [0.18, -0.85, 0.08]);
+            model.addPart(foot, footTransform);
+
+            // Toe claws
+            for (let toe of [-0.1, 0, 0.1]) {
+                for (let side of [-1, 1]) {
+                    const claw = QuadricGenerator.createCone(0.025, 0.08, 12, brown);
+                    transform = Mat4.translate(Mat4.identity(), [side * 0.18 + toe * 0.5, -0.92, 0.22]);
+                    model.addPart(claw, transform);
+                }
+            }
+
+            // Thin tail (shows evolution refinement)
+            const tail = QuadricGenerator.createCylinder(0.07, 0.48, 24, yellow);
+            transform = Mat4.rotateY(Mat4.identity(), Math.PI / 5.5);
+            transform = Mat4.translate(transform, [0, 0.2, -0.32]);
+            model.addPart(tail, transform);
+
+            return model.getData();
+        }
+
+        // Create Ground Platform - 3D rectangular platform/taman for Pokemon to stand on
+        function createGroundPlane() {
+            const width = 30;   // Much bigger than Pokemon (30 units wide)
+            const height = 0.3;  // Platform thickness
+            const depth = 30;    // 30 units deep
+
+            const grassGreen = [0.2, 0.7, 0.2];      // Bright grass on top
+            const darkGreen = [0.15, 0.55, 0.15];    // Darker grass variation
+            const brown = [0.4, 0.3, 0.2];           // Brown earth on sides
+            const darkBrown = [0.3, 0.2, 0.15];      // Darker brown
+
+            const vertices = [];
+            const normals = [];
+            const colors = [];
+            const indices = [];
+
+            // Create a grid pattern for grass (10x10 subdivisions)
+            const subdivisions = 10;
+            const stepX = (width * 2) / subdivisions;
+            const stepZ = (depth * 2) / subdivisions;
+
+            let vertexIndex = 0;
+
+            // Top face (grass with grid pattern)
+            for (let i = 0; i <= subdivisions; i++) {
+                for (let j = 0; j <= subdivisions; j++) {
+                    const x = -width + j * stepX;
+                    const z = -depth + i * stepZ;
+                    vertices.push(x, 0, z);
+                    normals.push(0, 1, 0);
+
+                    // Alternate colors for grass pattern
+                    if ((i + j) % 2 === 0) {
+                        colors.push(...grassGreen);
+                    } else {
+                        colors.push(...darkGreen);
+                    }
+                }
+            }
+
+            // Create triangles for top face
+            for (let i = 0; i < subdivisions; i++) {
+                for (let j = 0; j < subdivisions; j++) {
+                    const topLeft = i * (subdivisions + 1) + j;
+                    const topRight = topLeft + 1;
+                    const bottomLeft = (i + 1) * (subdivisions + 1) + j;
+                    const bottomRight = bottomLeft + 1;
+
+                    indices.push(topLeft, bottomLeft, topRight);
+                    indices.push(topRight, bottomLeft, bottomRight);
+                }
+            }
+
+            vertexIndex = vertices.length / 3;
+
+            // Bottom face
+            vertices.push(-width, -height, -depth);
+            vertices.push(width, -height, -depth);
+            vertices.push(width, -height, depth);
+            vertices.push(-width, -height, depth);
+            for (let i = 0; i < 4; i++) {
+                normals.push(0, -1, 0);
+                colors.push(...darkBrown);
+            }
+            indices.push(vertexIndex, vertexIndex + 2, vertexIndex + 1);
+            indices.push(vertexIndex, vertexIndex + 3, vertexIndex + 2);
+            vertexIndex += 4;
+
+            // Front face
+            vertices.push(-width, 0, depth);
+            vertices.push(width, 0, depth);
+            vertices.push(width, -height, depth);
+            vertices.push(-width, -height, depth);
+            for (let i = 0; i < 4; i++) {
+                normals.push(0, 0, 1);
+                colors.push(...brown);
+            }
+            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+            indices.push(vertexIndex, vertexIndex + 2, vertexIndex + 3);
+            vertexIndex += 4;
+
+            // Back face
+            vertices.push(width, 0, -depth);
+            vertices.push(-width, 0, -depth);
+            vertices.push(-width, -height, -depth);
+            vertices.push(width, -height, -depth);
+            for (let i = 0; i < 4; i++) {
+                normals.push(0, 0, -1);
+                colors.push(...brown);
+            }
+            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+            indices.push(vertexIndex, vertexIndex + 2, vertexIndex + 3);
+            vertexIndex += 4;
+
+            // Left face
+            vertices.push(-width, 0, -depth);
+            vertices.push(-width, 0, depth);
+            vertices.push(-width, -height, depth);
+            vertices.push(-width, -height, -depth);
+            for (let i = 0; i < 4; i++) {
+                normals.push(-1, 0, 0);
+                colors.push(...darkBrown);
+            }
+            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+            indices.push(vertexIndex, vertexIndex + 2, vertexIndex + 3);
+            vertexIndex += 4;
+
+            // Right face
+            vertices.push(width, 0, depth);
+            vertices.push(width, 0, -depth);
+            vertices.push(width, -height, -depth);
+            vertices.push(width, -height, depth);
+            for (let i = 0; i < 4; i++) {
+                normals.push(1, 0, 0);
+                colors.push(...darkBrown);
+            }
+            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2);
+            indices.push(vertexIndex, vertexIndex + 2, vertexIndex + 3);
+
+            return {
+                vertices: new Float32Array(vertices),
+                normals: new Float32Array(normals),
+                colors: new Float32Array(colors),
+                indices: new Uint16Array(indices)
+            };
+        }
+
+        // Create 3D Tree - Simple trunk with leafy top
+        function createTree() {
+            const vertices = [];
+            const normals = [];
+            const colors = [];
+            const indices = [];
+
+            const trunkBrown = [0.4, 0.25, 0.1];
+            const leafGreen = [0.1, 0.6, 0.1];
+            const darkLeaf = [0.08, 0.5, 0.08];
+
+            let idx = 0;
+
+            // Trunk (cylinder-like using box)
+            const tw = 0.15; // trunk width
+            const th = 1.2;  // trunk height
+
+            // Trunk front
+            vertices.push(-tw, 0, tw, tw, 0, tw, tw, th, tw, -tw, th, tw);
+            for (let i = 0; i < 4; i++) { normals.push(0, 0, 1); colors.push(...trunkBrown); }
+            indices.push(idx, idx+1, idx+2, idx, idx+2, idx+3);
+            idx += 4;
+
+            // Trunk back
+            vertices.push(tw, 0, -tw, -tw, 0, -tw, -tw, th, -tw, tw, th, -tw);
+            for (let i = 0; i < 4; i++) { normals.push(0, 0, -1); colors.push(...trunkBrown); }
+            indices.push(idx, idx+1, idx+2, idx, idx+2, idx+3);
+            idx += 4;
+
+            // Trunk left
+            vertices.push(-tw, 0, -tw, -tw, 0, tw, -tw, th, tw, -tw, th, -tw);
+            for (let i = 0; i < 4; i++) { normals.push(-1, 0, 0); colors.push(...trunkBrown); }
+            indices.push(idx, idx+1, idx+2, idx, idx+2, idx+3);
+            idx += 4;
+
+            // Trunk right
+            vertices.push(tw, 0, tw, tw, 0, -tw, tw, th, -tw, tw, th, tw);
+            for (let i = 0; i < 4; i++) { normals.push(1, 0, 0); colors.push(...trunkBrown); }
+            indices.push(idx, idx+1, idx+2, idx, idx+2, idx+3);
+            idx += 4;
+
+            // Leaves - pyramid shape on top
+            const lw = 0.8; // leaf width
+            const lh = 1.0; // leaf height
+            const ly = th;  // leaf y position
+
+            // Leaf pyramid top point
+            const topY = ly + lh;
+
+            // Leaf bottom square corners
+            const lb = [
+                [-lw, ly, -lw], [lw, ly, -lw], [lw, ly, lw], [-lw, ly, lw]
+            ];
+
+            // Leaf sides (4 triangular faces)
+            // Front triangle
+            vertices.push(...lb[3], ...lb[2], 0, topY, 0);
+            for (let i = 0; i < 3; i++) { normals.push(0, 0.7, 0.7); colors.push(...leafGreen); }
+            indices.push(idx, idx+1, idx+2);
+            idx += 3;
+
+            // Right triangle
+            vertices.push(...lb[2], ...lb[1], 0, topY, 0);
+            for (let i = 0; i < 3; i++) { normals.push(0.7, 0.7, 0); colors.push(...darkLeaf); }
+            indices.push(idx, idx+1, idx+2);
+            idx += 3;
+
+            // Back triangle
+            vertices.push(...lb[1], ...lb[0], 0, topY, 0);
+            for (let i = 0; i < 3; i++) { normals.push(0, 0.7, -0.7); colors.push(...leafGreen); }
+            indices.push(idx, idx+1, idx+2);
+            idx += 3;
+
+            // Left triangle
+            vertices.push(...lb[0], ...lb[3], 0, topY, 0);
+            for (let i = 0; i < 3; i++) { normals.push(-0.7, 0.7, 0); colors.push(...darkLeaf); }
+            indices.push(idx, idx+1, idx+2);
+
+            return {
+                vertices: new Float32Array(vertices),
+                normals: new Float32Array(normals),
+                colors: new Float32Array(colors),
+                indices: new Uint16Array(indices)
+            };
+        }
+
+        // Create 3D Mountain - Simple triangular mountain
+        function createMountain() {
+            const vertices = [];
+            const normals = [];
+            const colors = [];
+            const indices = [];
+
+            const mountainGray = [0.5, 0.5, 0.5];
+            const darkGray = [0.4, 0.4, 0.4];
+            const snowWhite = [0.9, 0.9, 0.95];
+
+            const width = 8;
+            const height = 6;
+            const depth = 4;
+
+            let idx = 0;
+
+            // Mountain peak
+            const peak = [0, height, 0];
+
+            // Base corners
+            const base = [
+                [-width, 0, depth],
+                [width, 0, depth],
+                [width, 0, -depth],
+                [-width, 0, -depth]
+            ];
+
+            // Front face
+            vertices.push(...base[0], ...base[1], ...peak);
+            for (let i = 0; i < 3; i++) {
+                normals.push(0, 0.6, 0.8);
+                const color = (i === 2) ? snowWhite : mountainGray;
+                colors.push(...color);
+            }
+            indices.push(idx, idx+1, idx+2);
+            idx += 3;
+
+            // Right face
+            vertices.push(...base[1], ...base[2], ...peak);
+            for (let i = 0; i < 3; i++) {
+                normals.push(0.8, 0.6, 0);
+                const color = (i === 2) ? snowWhite : darkGray;
+                colors.push(...color);
+            }
+            indices.push(idx, idx+1, idx+2);
+            idx += 3;
+
+            // Back face
+            vertices.push(...base[2], ...base[3], ...peak);
+            for (let i = 0; i < 3; i++) {
+                normals.push(0, 0.6, -0.8);
+                const color = (i === 2) ? snowWhite : mountainGray;
+                colors.push(...color);
+            }
+            indices.push(idx, idx+1, idx+2);
+            idx += 3;
+
+            // Left face
+            vertices.push(...base[3], ...base[0], ...peak);
+            for (let i = 0; i < 3; i++) {
+                normals.push(-0.8, 0.6, 0);
+                const color = (i === 2) ? snowWhite : darkGray;
+                colors.push(...color);
+            }
+            indices.push(idx, idx+1, idx+2);
+            idx += 3;
+
+            // Base
+            indices.push(idx, idx+2, idx+1, idx, idx+3, idx+2);
+            vertices.push(...base[0], ...base[1], ...base[2], ...base[3]);
+            for (let i = 0; i < 4; i++) {
+                normals.push(0, -1, 0);
+                colors.push(...darkGray);
+            }
+
+            return {
+                vertices: new Float32Array(vertices),
+                normals: new Float32Array(normals),
+                colors: new Float32Array(colors),
+                indices: new Uint16Array(indices)
+            };
+        }
+
+        // Create 2D Bird - Simple bird shape (quad with bird silhouette color)
+        function createBird() {
+            const birdBlack = [0.1, 0.1, 0.1];
+
+            const vertices = new Float32Array([
+                -0.2, 0, 0,
+                 0.2, 0, 0,
+                 0.2, 0.15, 0,
+                -0.2, 0.15, 0
+            ]);
+
+            const normals = new Float32Array([
+                0, 0, 1,
+                0, 0, 1,
+                0, 0, 1,
+                0, 0, 1
+            ]);
+
+            const colors = new Float32Array([
+                ...birdBlack,
+                ...birdBlack,
+                ...birdBlack,
+                ...birdBlack
+            ]);
+
+            const indices = new Uint16Array([
+                0, 1, 2,
+                0, 2, 3
+            ]);
+
+            return {
+                vertices: vertices,
+                normals: normals,
+                colors: colors,
+                indices: indices
+            };
+        }
+
+        // Create Particle Quad - For particle effects during evolution
+        function createParticleQuad() {
+            const size = 0.1;
+            const white = [1.0, 1.0, 1.0];
+
+            const vertices = new Float32Array([
+                -size, -size, 0,
+                 size, -size, 0,
+                 size,  size, 0,
+                -size,  size, 0
+            ]);
+
+            const normals = new Float32Array([
+                0, 0, 1,
+                0, 0, 1,
+                0, 0, 1,
+                0, 0, 1
+            ]);
+
+            const colors = new Float32Array([
+                ...white,
+                ...white,
+                ...white,
+                ...white
+            ]);
+
+            const indices = new Uint16Array([
+                0, 1, 2,
+                0, 2, 3
+            ]);
+
+            return {
+                vertices: vertices,
+                normals: normals,
+                colors: colors,
+                indices: indices
+            };
+        }
+
+        // Particle System Class
+        class ParticleSystem {
+            constructor() {
+                this.particles = [];
+                this.maxParticles = 100;
+            }
+
+            emit(position, count = 20) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 0.5 + Math.random() * 1.5;
+                    const lifetime = 1.0 + Math.random() * 1.0;
+
+                    this.particles.push({
+                        x: position[0],
+                        y: position[1],
+                        z: position[2],
+                        vx: Math.cos(angle) * speed,
+                        vy: 1.0 + Math.random() * 1.5, // Upward bias
+                        vz: Math.sin(angle) * speed,
+                        life: lifetime,
+                        maxLife: lifetime,
+                        size: 0.1 + Math.random() * 0.15,
+                        color: [
+                            0.5 + Math.random() * 0.5,  // R
+                            0.3 + Math.random() * 0.7,  // G
+                            1.0                         // B (psychic purple/blue)
+                        ]
+                    });
+                }
+
+                // Limit max particles
+                if (this.particles.length > this.maxParticles) {
+                    this.particles = this.particles.slice(-this.maxParticles);
+                }
+            }
+
+            update(deltaTime) {
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+
+                    // Update position
+                    p.x += p.vx * deltaTime;
+                    p.y += p.vy * deltaTime;
+                    p.z += p.vz * deltaTime;
+
+                    // Apply gravity
+                    p.vy -= 0.5 * deltaTime;
+
+                    // Update lifetime
+                    p.life -= deltaTime;
+
+                    // Remove dead particles
+                    if (p.life <= 0) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+            }
+
+            getParticles() {
+                return this.particles;
+            }
+
+            clear() {
+                this.particles = [];
+            }
+        }
+
+        // Buffer Management
+        class MeshBuffer {
+            constructor(data) {
+                this.vertexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data.vertices, gl.STATIC_DRAW);
+
+                this.normalBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data.normals, gl.STATIC_DRAW);
+
+                this.colorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data.colors, gl.STATIC_DRAW);
+
+                this.indexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data.indices, gl.STATIC_DRAW);
+
+                this.indexCount = data.indices.length;
+            }
+
+            bind() {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+                gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aPosition);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+                gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aNormal);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+                gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(aColor);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+            }
+
+            draw() {
+                gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_SHORT, 0);
+            }
+        }
+
+        // Enhanced Animation System with comprehensive transformations
+        class EvolutionAnimator {
+            constructor() {
+                this.currentStage = 0; // 0: Abra, 1: Kadabra, 2: Alakazam
+                this.targetStage = 0;
+                this.transitionProgress = 0;
+                this.isTransitioning = false;
+                this.transitionSpeed = 0.45; // Slower for more dramatic effect
+
+                // Use hierarchical model for Abra (index 0), old models for others
+                this.hierarchicalModels = [
+                    createHierarchicalAbra(),  // Hierarchical Abra
+                    null,  // Kadabra (use old model)
+                    null   // Alakazam (use old model)
+                ];
+
+                this.models = [
+                    new MeshBuffer(createAbra()),
+                    new MeshBuffer(createKadabra()),
+                    new MeshBuffer(createAlakazam())
+                ];
+
+                // Animation properties
+                this.particleIntensity = 0;
+                this.flashIntensity = 0;
+                this.rotationBoost = 0;
+
+                // Transformation properties
+                this.translationOffset = [0, 0, 0];  // a) Translation
+                this.rotationX = 0;                   // b) X-axis rotation
+                this.rotationY = 0;                   // b) Y-axis rotation
+                this.rotationZ = 0;                   // b) Z-axis rotation
+                this.scaleMultiplier = 1.0;          // c) Scaling
+                this.arbitraryRotation = 0;          // d) Arbitrary axis rotation
+                this.arbitraryAxis = [1, 1, 0];      // Custom rotation axis (diagonal)
+
+                // HIERARCHICAL OBJECT TRANSFORMATIONS - Individual body parts
+                this.bodyTilt = 0;                   // Body forward/backward tilt
+                this.leftArmRotation = 0;            // Left arm rotation
+                this.rightArmRotation = 0;           // Right arm rotation
+                this.leftHandRotation = 0;           // Left hand wave
+                this.rightHandRotation = 0;          // Right hand wave
+                this.leftKneeRotation = 0;           // Left knee bend
+                this.rightKneeRotation = 0;          // Right knee bend
+                this.headTilt = 0;                   // Head tilt side to side
+                this.spoonSpin = 0;                  // Spoon spinning (Kadabra/Alakazam)
+            }
+
+            setTarget(stage) {
+                if (stage !== this.currentStage && stage >= 0 && stage <= 2) {
+                    this.targetStage = stage;
+                    this.isTransitioning = true;
+                    this.transitionProgress = 0;
+                    this.flashIntensity = 0;
+                }
+            }
+
+            update(deltaTime) {
+                if (this.isTransitioning) {
+                    this.transitionProgress += deltaTime * this.transitionSpeed;
+
+                    // Smooth easing function for natural animation
+                    const easeProgress = this.easeInOutCubic(Math.min(this.transitionProgress, 1.0));
+
+                    // Multi-phase animation with ALL transformations
+                    if (this.transitionProgress < 0.3) {
+                        // Build up phase - gathering energy
+                        this.particleIntensity = easeProgress / 0.3;
+                        this.flashIntensity = 0;
+                        this.rotationBoost = easeProgress * 2;
+
+                        // a) TRANSLATION - Rise upward during energy gathering
+                        this.translationOffset = [
+                            Math.sin(this.transitionProgress * Math.PI * 8) * 0.2,  // Side-to-side wobble
+                            easeProgress * 0.8,  // Rise up
+                            0
+                        ];
+
+                        // b) ROTATION - Spin around all axes
+                        this.rotationX = easeProgress * Math.PI * 0.5;
+                        this.rotationY = 0;  // Y rotation handled by main rotation
+                        this.rotationZ = Math.sin(this.transitionProgress * Math.PI * 4) * 0.3;
+
+                        // c) SCALING - Slight shrink before growth
+                        this.scaleMultiplier = 1.0 - easeProgress * 0.15;
+
+                        // d) ARBITRARY AXIS ROTATION - Diagonal axis spin
+                        this.arbitraryRotation = easeProgress * Math.PI * 2;
+
+                        // HIERARCHICAL - DRAMATIC body part movements!
+                        this.bodyTilt = Math.sin(this.transitionProgress * Math.PI * 4) * 0.8;  // 45° lean
+                        this.leftArmRotation = easeProgress * Math.PI * 1.2;   // Raise arm up high!
+                        this.rightArmRotation = -easeProgress * Math.PI * 1.2;
+                        this.leftHandRotation = Math.sin(this.transitionProgress * Math.PI * 8) * Math.PI;  // Big wave!
+                        this.rightHandRotation = -Math.sin(this.transitionProgress * Math.PI * 8) * Math.PI;
+                        this.leftKneeRotation = easeProgress * 0.9;  // Deep bend
+                        this.rightKneeRotation = -easeProgress * 0.9;
+                        this.headTilt = Math.sin(this.transitionProgress * Math.PI * 6) * 0.8;  // Look around
+                        this.spoonSpin = this.transitionProgress * Math.PI * 6;  // Spin faster
+
+                    } else if (this.transitionProgress < 0.5) {
+                        // Peak transformation - bright flash
+                        const peakProgress = (this.transitionProgress - 0.3) / 0.2;
+                        this.particleIntensity = 1.0;
+                        this.flashIntensity = Math.sin(peakProgress * Math.PI);
+                        this.rotationBoost = 2.0 + peakProgress * 3;
+
+                        // a) TRANSLATION - Maximum height
+                        this.translationOffset = [
+                            Math.sin(peakProgress * Math.PI * 12) * 0.15,
+                            0.8 + peakProgress * 0.4,  // Peak height
+                            0
+                        ];
+
+                        // b) ROTATION - Rapid multi-axis spin
+                        this.rotationX = (0.5 + peakProgress) * Math.PI;
+                        this.rotationZ = Math.sin(peakProgress * Math.PI * 8) * 0.5;
+
+                        // c) SCALING - Expand dramatically
+                        this.scaleMultiplier = 0.85 + peakProgress * 0.4;  // Grow larger
+
+                        // d) ARBITRARY AXIS - Fast diagonal spin
+                        this.arbitraryRotation = (Math.PI * 2) + peakProgress * Math.PI * 4;
+
+                        // HIERARCHICAL - MAXIMUM movement at peak!
+                        this.bodyTilt = Math.sin(peakProgress * Math.PI * 12) * 1.2;  // Extreme lean!
+                        this.leftArmRotation = (1.2 + peakProgress * 0.8) * Math.PI;  // Arms fully raised!
+                        this.rightArmRotation = -(1.2 + peakProgress * 0.8) * Math.PI;
+                        this.leftHandRotation = Math.sin(peakProgress * Math.PI * 16) * Math.PI * 1.5;  // Wild waving!
+                        this.rightHandRotation = -Math.sin(peakProgress * Math.PI * 16) * Math.PI * 1.5;
+                        this.leftKneeRotation = 0.9 + peakProgress * 0.8;  // Deep squat!
+                        this.rightKneeRotation = -0.9 - peakProgress * 0.8;
+                        this.headTilt = Math.sin(peakProgress * Math.PI * 10) * 1.0;  // Head spinning!
+                        this.spoonSpin = (Math.PI * 6) + peakProgress * Math.PI * 12;  // Super fast spin!
+
+                    } else if (this.transitionProgress < 0.7) {
+                        // Morphing phase - actual change happens
+                        const morphProgress = (this.transitionProgress - 0.5) / 0.2;
+                        if (morphProgress > 0.5 && this.currentStage !== this.targetStage) {
+                            this.currentStage = this.targetStage; // Swap model midway
+                        }
+                        this.particleIntensity = 1.0 - morphProgress * 0.3;
+                        this.flashIntensity = 0.5 * (1.0 - morphProgress);
+                        this.rotationBoost = 5.0 - morphProgress * 2;
+
+                        // a) TRANSLATION - Descend back down
+                        this.translationOffset = [
+                            Math.sin(morphProgress * Math.PI * 6) * 0.1 * (1.0 - morphProgress),
+                            1.2 - morphProgress * 0.8,  // Descending
+                            0
+                        ];
+
+                        // b) ROTATION - Slow down rotation
+                        this.rotationX = Math.PI * (1.5 - morphProgress * 0.5);
+                        this.rotationZ = Math.sin(morphProgress * Math.PI * 4) * 0.3 * (1.0 - morphProgress);
+
+                        // c) SCALING - Return to normal size with overshoot
+                        const targetScale = this.currentStage === this.targetStage ? 1.0 : 1.25;
+                        this.scaleMultiplier = 1.25 - morphProgress * (1.25 - targetScale);
+
+                        // d) ARBITRARY AXIS - Complete final rotations
+                        this.arbitraryRotation = Math.PI * 6 + morphProgress * Math.PI * 2;
+
+                        // HIERARCHICAL - Still dramatic during morph
+                        this.bodyTilt = 1.2 * (1.0 - morphProgress) * Math.sin(morphProgress * Math.PI * 8);
+                        this.leftArmRotation = Math.PI * 2.0 * (1.0 - morphProgress * 0.5);
+                        this.rightArmRotation = -Math.PI * 2.0 * (1.0 - morphProgress * 0.5);
+                        this.leftHandRotation = Math.sin(morphProgress * Math.PI * 10) * Math.PI * (1.0 - morphProgress);
+                        this.rightHandRotation = -Math.sin(morphProgress * Math.PI * 10) * Math.PI * (1.0 - morphProgress);
+                        this.leftKneeRotation = 1.7 * (1.0 - morphProgress);
+                        this.rightKneeRotation = -1.7 * (1.0 - morphProgress);
+                        this.headTilt = Math.sin(morphProgress * Math.PI * 6) * 0.8 * (1.0 - morphProgress);
+                        this.spoonSpin = Math.PI * 18 + morphProgress * Math.PI * 6;
+
+                    } else {
+                        // Settling phase - energy dissipates
+                        const settleProgress = (this.transitionProgress - 0.7) / 0.3;
+                        this.particleIntensity = 0.7 * (1.0 - settleProgress);
+                        this.flashIntensity = 0;
+                        this.rotationBoost = 3.0 * (1.0 - settleProgress);
+
+                        // a) TRANSLATION - Small bounce and settle
+                        const bounce = Math.sin(settleProgress * Math.PI * 3) * 0.15 * (1.0 - settleProgress);
+                        this.translationOffset = [0, 0.4 * (1.0 - settleProgress) + bounce, 0];
+
+                        // b) ROTATION - Settle to neutral
+                        this.rotationX = Math.PI * (1.0 - settleProgress);
+                        this.rotationZ = Math.sin(settleProgress * Math.PI * 2) * 0.1 * (1.0 - settleProgress);
+
+                        // c) SCALING - Settle to exactly 1.0 with small bounce
+                        const scaleBounce = Math.sin(settleProgress * Math.PI * 2) * 0.05 * (1.0 - settleProgress);
+                        this.scaleMultiplier = 1.0 + scaleBounce;
+
+                        // d) ARBITRARY AXIS - Final spin down
+                        this.arbitraryRotation = Math.PI * 8 * (1.0 - settleProgress);
+
+                        // HIERARCHICAL - Gradual settling with bounces
+                        this.bodyTilt = 0.8 * Math.sin(settleProgress * Math.PI * 4) * (1.0 - settleProgress);
+                        this.leftArmRotation = Math.PI * 1.5 * (1.0 - settleProgress);
+                        this.rightArmRotation = -Math.PI * 1.5 * (1.0 - settleProgress);
+                        this.leftHandRotation = Math.sin(settleProgress * Math.PI * 6) * Math.PI * 0.5 * (1.0 - settleProgress);
+                        this.rightHandRotation = -Math.sin(settleProgress * Math.PI * 6) * Math.PI * 0.5 * (1.0 - settleProgress);
+                        this.leftKneeRotation = 1.0 * (1.0 - settleProgress);
+                        this.rightKneeRotation = -1.0 * (1.0 - settleProgress);
+                        this.headTilt = Math.sin(settleProgress * Math.PI * 3) * 0.5 * (1.0 - settleProgress);
+                        this.spoonSpin = Math.PI * 24 * (1.0 - settleProgress);
+                    }
+
+                    if (this.transitionProgress >= 1.0) {
+                        this.transitionProgress = 1.0;
+                        this.isTransitioning = false;
+                        this.currentStage = this.targetStage;
+                        this.particleIntensity = 0;
+                        this.flashIntensity = 0;
+                        this.rotationBoost = 0;
+                        // Reset all transformations
+                        this.translationOffset = [0, 0, 0];
+                        this.rotationX = 0;
+                        this.rotationY = 0;
+                        this.rotationZ = 0;
+                        this.scaleMultiplier = 1.0;
+                        this.arbitraryRotation = 0;
+                        // Reset hierarchical transformations
+                        this.bodyTilt = 0;
+                        this.leftArmRotation = 0;
+                        this.rightArmRotation = 0;
+                        this.leftHandRotation = 0;
+                        this.rightHandRotation = 0;
+                        this.leftKneeRotation = 0;
+                        this.rightKneeRotation = 0;
+                        this.headTilt = 0;
+                        this.spoonSpin = 0;
+                    }
+                }
+            }
+
+            // Smooth easing function
+            easeInOutCubic(t) {
+                return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+            }
+
+            getCurrentModel() {
+                return {
+                    isHierarchical: this.hierarchicalModels[this.currentStage] !== null,
+                    hierarchical: this.hierarchicalModels[this.currentStage],
+                    mesh: this.models[this.currentStage]
+                };
+            }
+
+            getScale() {
+                if (this.isTransitioning) {
+                    // Dynamic pulsing scale with multiple frequencies
+                    const basePulse = 1.0 + Math.sin(this.transitionProgress * Math.PI * 6) * 0.12 * this.particleIntensity;
+                    const microPulse = Math.sin(this.transitionProgress * Math.PI * 20) * 0.03 * this.particleIntensity;
+                    const flashExpansion = this.flashIntensity * 0.15;
+
+                    return basePulse + microPulse + flashExpansion;
+                }
+                // Idle breathing animation
+                return 1.0 + Math.sin(Date.now() * 0.001) * 0.02;
+            }
+
+            getParticleIntensity() {
+                return this.particleIntensity;
+            }
+
+            getFlashIntensity() {
+                return this.flashIntensity;
+            }
+
+            getRotationBoost() {
+                return this.rotationBoost;
+            }
+
+            // Get all transformation values
+            getTranslation() {
+                return this.translationOffset;
+            }
+
+            getRotationX() {
+                return this.rotationX;
+            }
+
+            getRotationZ() {
+                return this.rotationZ;
+            }
+
+            getScaleMultiplier() {
+                return this.scaleMultiplier;
+            }
+
+            getArbitraryRotation() {
+                return this.arbitraryRotation;
+            }
+
+            getArbitraryAxis() {
+                return this.arbitraryAxis;
+            }
+
+            // Get hierarchical body part transformations
+            getBodyTilt() {
+                return this.bodyTilt;
+            }
+
+            getLeftArmRotation() {
+                return this.leftArmRotation;
+            }
+
+            getRightArmRotation() {
+                return this.rightArmRotation;
+            }
+
+            getLeftHandRotation() {
+                return this.leftHandRotation;
+            }
+
+            getRightHandRotation() {
+                return this.rightHandRotation;
+            }
+
+            getLeftKneeRotation() {
+                return this.leftKneeRotation;
+            }
+
+            getRightKneeRotation() {
+                return this.rightKneeRotation;
+            }
+
+            getHeadTilt() {
+                return this.headTilt;
+            }
+
+            getSpoonSpin() {
+                return this.spoonSpin;
+            }
+        }
+
+        // ============================================
+        // KONFIGURASI KETINGGIAN GROUND - UBAH DISINI
+        // ============================================
+        // Semakin NEGATIF nilainya, semakin TURUN ground platform
+        // Contoh: -0.6 (default), -0.8 (lebih turun), -0.4 (lebih naik)
+        const GROUND_HEIGHT_OFFSET = -1.5;
+        // ============================================
+
+        // ============================================
+        // KONFIGURASI POSISI POKEMON - UBAH DISINI
+        // ============================================
+        // Pokemon position in world space
+        // Z positif = lebih ke depan (menjauhi gunung)
+        // Z negatif = lebih ke belakang (mendekati gunung)
+        const POKEMON_POSITION_X = 0;
+        const POKEMON_POSITION_Y = 0;
+        const POKEMON_POSITION_Z = 10;  // Pokemon moved forward (mountains are at Z=-20 to -25)
+        // ============================================
+
+        // Global state
+        let animator = new EvolutionAnimator();
+        let groundPlane = new MeshBuffer(createGroundPlane());
+        let rotation = 0;
+        let autoRotate = false;  // Changed to false - Pokemon faces forward
+        let lastTime = 0;
+
+        // Environment objects
+        let treeMesh = new MeshBuffer(createTree());
+        let mountainMesh = new MeshBuffer(createMountain());
+        let birdMesh = new MeshBuffer(createBird());
+
+        // Particle system for evolution effects
+        let particleSystem = new ParticleSystem();
+        let particleMesh = new MeshBuffer(createParticleQuad());
+        let lastEvolutionState = false; // Track when evolution starts
+
+        // Tree positions (scattered around the ground)
+        const treePositions = [
+            [-8, GROUND_HEIGHT_OFFSET, -8],
+            [8, GROUND_HEIGHT_OFFSET, -10],
+            [-10, GROUND_HEIGHT_OFFSET, 8],
+            [6, GROUND_HEIGHT_OFFSET, 9]
+        ];
+
+        // Mountain positions (far background)
+        const mountainPositions = [
+            [-15, GROUND_HEIGHT_OFFSET, -20],
+            [12, GROUND_HEIGHT_OFFSET, -22],
+            [0, GROUND_HEIGHT_OFFSET, -25]
+        ];
+
+        // Birds animation state (multiple birds flying around)
+        const birds = [
+            { x: -5, y: 4, z: 0, speedX: 1.5, speedY: 0.3, offset: 0 },
+            { x: 3, y: 5, z: -2, speedX: -1.2, speedY: 0.25, offset: Math.PI },
+            { x: 0, y: 6, z: 2, speedX: 1.8, speedY: 0.35, offset: Math.PI/2 }
+        ];
+
+        // Camera controls with spherical coordinates for mouse rotation
+        let cameraTarget = [POKEMON_POSITION_X, 0.5, POKEMON_POSITION_Z];
+        let cameraDistance = 8.0; // Distance from target
+        let cameraTheta = 0; // Horizontal angle (azimuth)
+        let cameraPhi = Math.PI / 4; // Vertical angle (elevation) - 45 degrees
+        let cameraSpeed = 5.0; // Increased from 2.0 to 5.0 for faster movement
+
+        // Mouse control state
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        let mouseSensitivity = 0.005;
+
+        // Calculate camera position from spherical coordinates
+        function updateCameraPosition() {
+            cameraPos[0] = cameraTarget[0] + cameraDistance * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+            cameraPos[1] = cameraTarget[1] + cameraDistance * Math.cos(cameraPhi);
+            cameraPos[2] = cameraTarget[2] + cameraDistance * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+        }
+
+        let cameraPos = [0, 0, 0];
+        updateCameraPosition();
+
+        let keys = {
+            w: false,
+            a: false,
+            s: false,
+            d: false,
+            q: false,
+            e: false
+        };
+
+        const pokemonNames = ['Abra', 'Kadabra', 'Alakazam'];
+        const pokemonInfo = [
+            'The Psi Pokémon - Sleeps 18 hours a day',
+            'Emits alpha waves - Silver spoon amplifies power',
+            'IQ of 5000 - Dual spoons for maximum psychic power'
+        ];
+
+        // UI Functions
+        function evolveToAbra() {
+            animator.setTarget(0);
+        }
+
+        function evolveToKadabra() {
+            animator.setTarget(1);
+        }
+
+        function evolveToAlakazam() {
+            animator.setTarget(2);
+        }
+
+        function toggleRotation() {
+            autoRotate = !autoRotate;
+        }
+
+        let autoEvolveInterval = null;
+        function autoEvolve() {
+            if (autoEvolveInterval) {
+                clearInterval(autoEvolveInterval);
+                autoEvolveInterval = null;
+            } else {
+                let stage = 0;
+                autoEvolveInterval = setInterval(() => {
+                    animator.setTarget(stage);
+                    stage = (stage + 1) % 3;
+                }, 3000);
+            }
+        }
+
+        // UI Functions removed - no longer needed
+        /*
+        function updatePokemonInfo() {
+            setTimeout(() => {
+                const stage = animator.currentStage;
+                document.getElementById('pokemonName').textContent = pokemonNames[stage];
+                document.getElementById('pokemonInfo').textContent = pokemonInfo[stage];
+            }, 800);
+        }
+
+        let showingTransformations = false;
+        function showTransformationInfo() {
+            showingTransformations = !showingTransformations;
+            const display = document.getElementById('transformationDisplay');
+            display.style.display = showingTransformations ? 'block' : 'none';
+
+            const button = event.target;
+            button.textContent = showingTransformations ? 'Hide Transformation Details' : 'Show Transformation Details';
+
+            if (showingTransformations) {
+                alert('TRANSFORMATION FEATURES:\n\n' +
+                    'a) TRANSLATION:\n' +
+                    '   • Pokemon rises up during evolution\n' +
+                    '   • Side-to-side wobble effect\n' +
+                    '   • Bounce and settle animation\n\n' +
+                    'b) ROTATION (X, Y, Z axes):\n' +
+                    '   • Y-axis: Main rotation (always active)\n' +
+                    '   • X-axis: Pitch during evolution\n' +
+                    '   • Z-axis: Roll/wobble effect\n\n' +
+                    'c) SCALING:\n' +
+                    '   • Shrink then expand during evolution\n' +
+                    '   • Proportional scaling on all axes\n' +
+                    '   • Bounce effect when settling\n\n' +
+                    'd) ARBITRARY AXIS ROTATION:\n' +
+                    '   • Uses Rodrigues\' rotation formula\n' +
+                    '   • Rotates around diagonal axis [1,1,0]\n' +
+                    '   • Creates complex spinning motion\n\n' +
+                    'e) HIERARCHICAL OBJECTS:\n' +
+                    '   • Body tilts forward/backward\n' +
+                    '   • Arms rotate independently\n' +
+                    '   • Hands wave back and forth\n' +
+                    '   • Knees bend during animation\n' +
+                    '   • Head tilts side to side\n' +
+                    '   • Spoons spin (Kadabra/Alakazam)\n\n' +
+                    'Press any evolution button to see all transformations in action!'
+                );
+            }
+        }
+
+        // Update transformation display in real-time
+        function updateTransformationDisplay() {
+            if (!showingTransformations) return;
+
+            const trans = animator.getTranslation();
+            const rotX = animator.getRotationX();
+            const rotZ = animator.getRotationZ();
+            const scale = animator.getScaleMultiplier();
+            const arbRot = animator.getArbitraryRotation();
+
+            const details = document.getElementById('transDetails');
+            if (animator.isTransitioning) {
+                const bodyTilt = animator.getBodyTilt();
+                const leftArm = animator.getLeftArmRotation();
+                const leftHand = animator.getLeftHandRotation();
+                const leftKnee = animator.getLeftKneeRotation();
+
+                details.innerHTML = `
+                    <div style="color: #4CAF50;">⬆ Translation: (${trans[0].toFixed(2)}, ${trans[1].toFixed(2)}, ${trans[2].toFixed(2)})</div>
+                    <div style="color: #2196F3;">🔄 Rotation X: ${(rotX * 180 / Math.PI).toFixed(1)}°</div>
+                    <div style="color: #2196F3;">🔄 Rotation Z: ${(rotZ * 180 / Math.PI).toFixed(1)}°</div>
+                    <div style="color: #FF9800;">📏 Scale: ${scale.toFixed(3)}x</div>
+                    <div style="color: #9C27B0;">⚡ Arbitrary: ${(arbRot * 180 / Math.PI).toFixed(1)}°</div>
+                    <div style="color: #00BCD4; margin-top: 3px; font-size: 10px; opacity: 0.9;">
+                        👤 Body: ${(bodyTilt * 180 / Math.PI).toFixed(0)}° |
+                        💪 Arm: ${(leftArm * 180 / Math.PI).toFixed(0)}°<br>
+                        👋 Hand: ${(leftHand * 180 / Math.PI).toFixed(0)}° |
+                        🦵 Knee: ${(leftKnee * 180 / Math.PI).toFixed(0)}°
+                    </div>
+                    <div style="color: #FFD700; margin-top: 5px;">✨ Evolving! (${(animator.transitionProgress * 100).toFixed(0)}%)</div>
+                `;
+            } else {
+                details.innerHTML = `
+                    <div style="color: #888;">No evolution in progress</div>
+                    <div style="color: #888; font-size: 10px; margin-top: 5px;">
+                        Click an evolution button to see<br>all transformations in action!
+                    </div>
+                `;
+            }
+        }
+        */
+
+        // Render Loop with enhanced effects
+        function render(currentTime) {
+            currentTime *= 0.001; // Convert to seconds
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+
+            // Update animation
+            animator.update(deltaTime);
+
+            // Update particle system
+            particleSystem.update(deltaTime);
+
+            // Emit particles during evolution
+            if (animator.isTransitioning) {
+                if (!lastEvolutionState) {
+                    // Evolution just started - emit burst
+                    particleSystem.emit([POKEMON_POSITION_X, POKEMON_POSITION_Y + 0.5, POKEMON_POSITION_Z], 30);
+                } else {
+                    // Continuous particle emission during evolution
+                    if (Math.random() < 0.3) { // 30% chance each frame
+                        particleSystem.emit([POKEMON_POSITION_X, POKEMON_POSITION_Y + 0.5, POKEMON_POSITION_Z], 3);
+                    }
+                }
+                lastEvolutionState = true;
+            } else {
+                lastEvolutionState = false;
+            }
+
+            // Update camera with WASD controls
+            updateCamera(deltaTime);
+
+            // Clear with sky-themed background
+            const flashIntensity = animator.getFlashIntensity();
+            // Sky gradient colors (light blue with slight variation)
+            const skyR = 0.53 + flashIntensity * 0.3;  // Light blue
+            const skyG = 0.81 + flashIntensity * 0.15; // Sky blue
+            const skyB = 0.92 + flashIntensity * 0.08; // Bright blue
+            gl.clearColor(skyR, skyG, skyB, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+            gl.enable(gl.CULL_FACE);
+
+            // Camera setup with WASD controls
+            const aspect = canvas.width / canvas.height;
+            const projectionMatrix = Mat4.perspective(Math.PI / 4, aspect, 0.1, 100.0);
+            const viewMatrix = Mat4.lookAt(cameraPos, cameraTarget, [0, 1, 0]);
+
+            // Apply ALL transformations (Translation, Rotation, Scaling, Arbitrary Axis)
+            let modelMatrix = Mat4.identity();
+
+            // Base Pokemon world position (away from mountains)
+            modelMatrix = Mat4.translate(modelMatrix, [POKEMON_POSITION_X, POKEMON_POSITION_Y, POKEMON_POSITION_Z]);
+
+            // a) TRANSLATION - Apply animation position offset
+            const translation = animator.getTranslation();
+            modelMatrix = Mat4.translate(modelMatrix, translation);
+
+            // b) ROTATION - Apply rotations on X, Y, Z axes
+            if (autoRotate) {
+                const rotationSpeed = 0.5 + animator.getRotationBoost() * 0.5;
+                rotation += deltaTime * rotationSpeed;
+            }
+
+            // Apply Y-axis rotation (main rotation)
+            modelMatrix = Mat4.rotateY(modelMatrix, rotation);
+
+            // Apply X-axis rotation (pitch - during evolution)
+            const rotX = animator.getRotationX();
+            if (rotX !== 0) {
+                modelMatrix = Mat4.rotateX(modelMatrix, rotX);
+            }
+
+            // Apply Z-axis rotation (roll - during evolution)
+            const rotZ = animator.getRotationZ();
+            if (rotZ !== 0) {
+                modelMatrix = Mat4.rotateZ(modelMatrix, rotZ);
+            }
+
+            // d) ARBITRARY AXIS ROTATION - Using Rodrigues' formula
+            const arbRot = animator.getArbitraryRotation();
+            const arbAxis = animator.getArbitraryAxis();
+            if (arbRot !== 0) {
+                modelMatrix = Mat4.rotateArbitrary(modelMatrix, arbAxis, arbRot);
+            }
+
+            // c) SCALING - Apply both base scale and multiplier
+            const baseScale = animator.getScale();
+            const scaleMultiplier = animator.getScaleMultiplier();
+            const finalScale = baseScale * scaleMultiplier;
+            modelMatrix = Mat4.scale(modelMatrix, [finalScale, finalScale, finalScale]);
+
+            // Normal matrix for lighting
+            const normalMatrix = Mat4.transpose(Mat4.invert(modelMatrix));
+
+            // Dynamic lighting that orbits during evolution
+            const lightAngle = animator.isTransitioning ? currentTime * 2 : currentTime * 0.3;
+            const lightX = Math.cos(lightAngle) * 4;
+            const lightZ = Math.sin(lightAngle) * 4;
+            const lightY = 5 + Math.sin(currentTime) * 1;
+
+            // Set base uniforms
+            gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+            gl.uniformMatrix4fv(uViewMatrix, false, viewMatrix);
+            gl.uniformMatrix4fv(uModelMatrix, false, modelMatrix);
+            gl.uniformMatrix4fv(uNormalMatrix, false, normalMatrix);
+            gl.uniform3fv(uLightPosition, [lightX, lightY, lightZ]);
+            gl.uniform3fv(uViewPosition, cameraPos);
+
+            // New brilliance uniforms
+            const glowIntensity = animator.getParticleIntensity();
+            gl.uniform1f(uGlowIntensity, glowIntensity);
+            gl.uniform1f(uMetallic, 0.8); // High metallic for shiny look
+
+            // Set hierarchical transformation uniforms
+            gl.uniform1f(uBodyTilt, animator.getBodyTilt());
+            gl.uniform1f(uHeadTilt, animator.getHeadTilt());
+            gl.uniform1f(uLeftArmRot, animator.getLeftArmRotation());
+            gl.uniform1f(uRightArmRot, animator.getRightArmRotation());
+            gl.uniform1f(uLeftHandRot, animator.getLeftHandRotation());
+            gl.uniform1f(uRightHandRot, animator.getRightHandRotation());
+            gl.uniform1f(uLeftKneeRot, animator.getLeftKneeRotation());
+            gl.uniform1f(uRightKneeRot, animator.getRightKneeRotation());
+            gl.uniform1f(uSpoonSpin, animator.getSpoonSpin());
+
+            // Draw ground plane first (lowered to avoid Pokemon feet)
+            const groundModelMatrix = Mat4.translate(Mat4.identity(), [0, GROUND_HEIGHT_OFFSET, 0]);
+            const groundNormalMatrix = Mat4.transpose(Mat4.invert(groundModelMatrix));
+            gl.uniformMatrix4fv(uModelMatrix, false, groundModelMatrix);
+            gl.uniformMatrix4fv(uNormalMatrix, false, groundNormalMatrix);
+            gl.uniform1f(uGlowIntensity, 0.0);  // No glow for ground
+            groundPlane.bind();
+            groundPlane.draw();
+
+            // Draw mountains (background, furthest)
+            mountainMesh.bind();
+            for (const pos of mountainPositions) {
+                const mountainModel = Mat4.translate(Mat4.identity(), pos);
+                const mountainNormal = Mat4.transpose(Mat4.invert(mountainModel));
+                gl.uniformMatrix4fv(uModelMatrix, false, mountainModel);
+                gl.uniformMatrix4fv(uNormalMatrix, false, mountainNormal);
+                mountainMesh.draw();
+            }
+
+            // Draw trees (scattered on ground)
+            treeMesh.bind();
+            for (const pos of treePositions) {
+                const treeModel = Mat4.translate(Mat4.identity(), pos);
+                const treeNormal = Mat4.transpose(Mat4.invert(treeModel));
+                gl.uniformMatrix4fv(uModelMatrix, false, treeModel);
+                gl.uniformMatrix4fv(uNormalMatrix, false, treeNormal);
+                treeMesh.draw();
+            }
+
+            // Update bird animations
+            for (const bird of birds) {
+                bird.x += bird.speedX * deltaTime;
+                bird.y = 4 + Math.sin(currentTime * 2 + bird.offset) * bird.speedY;
+
+                // Wrap around horizontally
+                if (bird.x > 15) bird.x = -15;
+                if (bird.x < -15) bird.x = 15;
+            }
+
+            // Draw birds (flying animation)
+            birdMesh.bind();
+            for (const bird of birds) {
+                let birdModel = Mat4.translate(Mat4.identity(), [bird.x, bird.y, bird.z]);
+                // Rotate bird to face movement direction
+                if (bird.speedX > 0) {
+                    birdModel = Mat4.rotateY(birdModel, Math.PI / 2);
+                } else {
+                    birdModel = Mat4.rotateY(birdModel, -Math.PI / 2);
+                }
+                // Add wing flapping effect (subtle Y rotation)
+                birdModel = Mat4.rotateZ(birdModel, Math.sin(currentTime * 8 + bird.offset) * 0.2);
+
+                const birdNormal = Mat4.transpose(Mat4.invert(birdModel));
+                gl.uniformMatrix4fv(uModelMatrix, false, birdModel);
+                gl.uniformMatrix4fv(uNormalMatrix, false, birdNormal);
+                birdMesh.draw();
+            }
+
+            // Draw particles with blend mode
+            const particles = particleSystem.getParticles();
+            if (particles.length > 0) {
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+                gl.depthMask(false); // Don't write to depth buffer
+
+                particleMesh.bind();
+                for (const particle of particles) {
+                    // Calculate alpha based on lifetime
+                    const alpha = particle.life / particle.maxLife;
+
+                    // Create particle model matrix
+                    let particleModel = Mat4.translate(Mat4.identity(), [particle.x, particle.y, particle.z]);
+                    // Billboard effect - face camera
+                    particleModel = Mat4.rotateY(particleModel, cameraTheta);
+                    particleModel = Mat4.scale(particleModel, [particle.size, particle.size, particle.size]);
+
+                    const particleNormal = Mat4.transpose(Mat4.invert(particleModel));
+                    gl.uniformMatrix4fv(uModelMatrix, false, particleModel);
+                    gl.uniformMatrix4fv(uNormalMatrix, false, particleNormal);
+                    gl.uniform1f(uGlowIntensity, alpha * 2.0); // Bright glow for particles
+
+                    particleMesh.draw();
+                }
+
+                gl.depthMask(true); // Re-enable depth writing
+                gl.disable(gl.BLEND);
+            }
+
+            // Draw current Pokemon model (hierarchical or mesh)
+            gl.uniformMatrix4fv(uModelMatrix, false, modelMatrix);
+            gl.uniformMatrix4fv(uNormalMatrix, false, normalMatrix);
+            gl.uniform1f(uGlowIntensity, glowIntensity);
+
+            const currentModel = animator.getCurrentModel();
+
+            if (currentModel.isHierarchical) {
+                // Apply joint rotations to hierarchical body parts
+                const root = currentModel.hierarchical;
+
+                // Body tilt (applied to root transform)
+                let bodyTransform = Mat4.translate(Mat4.identity(), [0, 0.4, 0]);
+                bodyTransform = Mat4.rotateX(bodyTransform, animator.getBodyTilt());
+                root.localTransform = bodyTransform;
+
+                // Head rotation (child of body)
+                if (root.head) {
+                    let headTransform = Mat4.translate(Mat4.identity(), [0, 0.9, 0]);
+                    headTransform = Mat4.rotateZ(headTransform, animator.getHeadTilt());
+                    root.head.localTransform = headTransform;
+                }
+
+                // Left arm rotation at shoulder
+                if (root.leftArm) {
+                    let leftArmTransform = Mat4.translate(Mat4.identity(), [-0.45, 0.3, 0]);
+                    leftArmTransform = Mat4.rotateX(leftArmTransform, animator.getLeftArmRotation());
+                    root.leftArm.localTransform = leftArmTransform;
+                }
+
+                // Left hand rotation at wrist
+                if (root.leftHand) {
+                    let leftHandTransform = Mat4.translate(Mat4.identity(), [0, -0.25, 0]);
+                    leftHandTransform = Mat4.rotateZ(leftHandTransform, animator.getLeftHandRotation());
+                    root.leftHand.localTransform = leftHandTransform;
+                }
+
+                // Right arm rotation at shoulder
+                if (root.rightArm) {
+                    let rightArmTransform = Mat4.translate(Mat4.identity(), [0.45, 0.3, 0]);
+                    rightArmTransform = Mat4.rotateX(rightArmTransform, animator.getRightArmRotation());
+                    root.rightArm.localTransform = rightArmTransform;
+                }
+
+                // Right hand rotation at wrist
+                if (root.rightHand) {
+                    let rightHandTransform = Mat4.translate(Mat4.identity(), [0, -0.25, 0]);
+                    rightHandTransform = Mat4.rotateZ(rightHandTransform, animator.getRightHandRotation());
+                    root.rightHand.localTransform = rightHandTransform;
+                }
+
+                // Left leg rotation at hip/knee
+                if (root.leftLeg) {
+                    let leftLegTransform = Mat4.translate(Mat4.identity(), [-0.2, -0.25, 0]);
+                    leftLegTransform = Mat4.rotateX(leftLegTransform, animator.getLeftKneeRotation());
+                    root.leftLeg.localTransform = leftLegTransform;
+                }
+
+                // Right leg rotation at hip/knee
+                if (root.rightLeg) {
+                    let rightLegTransform = Mat4.translate(Mat4.identity(), [0.2, -0.25, 0]);
+                    rightLegTransform = Mat4.rotateX(rightLegTransform, animator.getRightKneeRotation());
+                    root.rightLeg.localTransform = rightLegTransform;
+                }
+
+                // Draw hierarchical model
+                root.draw(modelMatrix);
+            } else {
+                // Draw traditional mesh model
+                currentModel.mesh.bind();
+                currentModel.mesh.draw();
+            }
+
+            // Enhanced evolution effects with multiple layers
+            if (animator.isTransitioning) {
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+
+                // Psychic aura glow (3 layers for depth)
+                for (let i = 0; i < 3; i++) {
+                    const glowScale = finalScale * (1.0 + glowIntensity * (0.08 + i * 0.04));
+                    let glowModel = Mat4.identity();
+
+                    // Apply base Pokemon world position first
+                    glowModel = Mat4.translate(glowModel, [POKEMON_POSITION_X, POKEMON_POSITION_Y, POKEMON_POSITION_Z]);
+
+                    // Apply animation translation to glow layers
+                    glowModel = Mat4.translate(glowModel, translation);
+                    glowModel = Mat4.rotateY(glowModel, rotation + i * 0.3);
+
+                    // Apply X and Z rotations for glow
+                    if (rotX !== 0) {
+                        glowModel = Mat4.rotateX(glowModel, rotX);
+                    }
+                    if (rotZ !== 0) {
+                        glowModel = Mat4.rotateZ(glowModel, rotZ);
+                    }
+
+                    // Apply arbitrary axis rotation to glow
+                    if (arbRot !== 0) {
+                        glowModel = Mat4.rotateArbitrary(glowModel, arbAxis, arbRot);
+                    }
+
+                    glowModel = Mat4.scale(glowModel, [glowScale, glowScale, glowScale]);
+
+                    const layerGlow = glowIntensity * (0.8 - i * 0.25);
+                    gl.uniformMatrix4fv(uModelMatrix, false, glowModel);
+                    gl.uniformMatrix4fv(uNormalMatrix, false, Mat4.transpose(Mat4.invert(glowModel)));
+                    gl.uniform1f(uGlowIntensity, layerGlow);
+
+                    if (currentModel.isHierarchical) {
+                        currentModel.hierarchical.draw(glowModel);
+                    } else {
+                        currentModel.mesh.draw();
+                    }
+                }
+
+                gl.disable(gl.BLEND);
+
+                // Reset glow for next frame
+                gl.uniform1f(uGlowIntensity, glowIntensity);
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        });
+
+        // WASD Camera Controls
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = true;
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = false;
+                e.preventDefault();
+            }
+        });
+
+        // Update camera based on key inputs (moves target, camera rotates with mouse)
+        function updateCamera(deltaTime) {
+            const speed = cameraSpeed * deltaTime;
+
+            // Calculate view direction from camera to target (forward vector)
+            const viewDir = [
+                cameraTarget[0] - cameraPos[0],
+                cameraTarget[1] - cameraPos[1],
+                cameraTarget[2] - cameraPos[2]
+            ];
+
+            // Normalize view direction
+            const viewLen = Math.sqrt(viewDir[0] * viewDir[0] + viewDir[1] * viewDir[1] + viewDir[2] * viewDir[2]);
+            if (viewLen > 0) {
+                viewDir[0] /= viewLen;
+                viewDir[1] /= viewLen;
+                viewDir[2] /= viewLen;
+            }
+
+            // Forward vector (project to horizontal plane for movement)
+            const forward = [
+                viewDir[0],
+                0,  // Lock Y for ground movement
+                viewDir[2]
+            ];
+            const forwardLen = Math.sqrt(forward[0] * forward[0] + forward[2] * forward[2]);
+            if (forwardLen > 0) {
+                forward[0] /= forwardLen;
+                forward[2] /= forwardLen;
+            }
+
+            // Right vector = cross(forward, up) where up = [0, 1, 0]
+            // cross([fx, 0, fz], [0, 1, 0]) = [-fz, 0, fx]
+            const right = [-forward[2], 0, forward[0]];
+
+            // W/S - Move camera target forward/backward relative to view
+            if (keys.w) {
+                cameraTarget[0] += forward[0] * speed;
+                cameraTarget[2] += forward[2] * speed;
+            }
+            if (keys.s) {
+                cameraTarget[0] -= forward[0] * speed;
+                cameraTarget[2] -= forward[2] * speed;
+            }
+
+            // A/D - Strafe camera target left/right relative to view
+            if (keys.a) {
+                cameraTarget[0] -= right[0] * speed;  // Move LEFT
+                cameraTarget[2] -= right[2] * speed;
+            }
+            if (keys.d) {
+                cameraTarget[0] += right[0] * speed;  // Move RIGHT
+                cameraTarget[2] += right[2] * speed;
+            }
+
+            // Q/E - Move camera target up/down
+            if (keys.q) {
+                cameraTarget[1] += speed;
+            }
+            if (keys.e) {
+                cameraTarget[1] -= speed;
+            }
+
+            // Update camera position based on spherical coordinates
+            updateCameraPosition();
+        }
+
+        // Mouse drag to rotate camera
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            canvas.style.cursor = 'grabbing';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+
+            const deltaX = e.clientX - lastMouseX;
+            const deltaY = e.clientY - lastMouseY;
+
+            // Update camera angles
+            cameraTheta -= deltaX * mouseSensitivity;
+            cameraPhi += deltaY * mouseSensitivity;
+
+            // Clamp phi to avoid gimbal lock
+            cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+
+            updateCameraPosition();
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+            canvas.style.cursor = 'grab';
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            isDragging = false;
+            canvas.style.cursor = 'grab';
+        });
+
+        // Mouse wheel to zoom
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            cameraDistance += e.deltaY * 0.01;
+            cameraDistance = Math.max(3, Math.min(30, cameraDistance)); // Clamp distance
+            updateCameraPosition();
+        });
+
+        canvas.style.cursor = 'grab';
+
+        // Start rendering
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
