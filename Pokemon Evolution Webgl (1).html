@@ -130,7 +130,12 @@
 
         // WebGL Setup and Utilities
         const canvas = document.getElementById('glCanvas');
-        const gl = canvas.getContext('webgl');
+        const gl = canvas.getContext('webgl', {
+            depth: true,
+            stencil: false,
+            antialias: true,
+            premultipliedAlpha: false
+        });
 
         if (!gl) {
             alert('WebGL not supported!');
@@ -765,7 +770,7 @@
             }
 
             // Draw this part and all children with accumulated transforms
-            draw(parentTransform = Mat4.identity()) {
+            draw(parentTransform = Mat4.identity(), depthLayer = 0) {
                 // Combine parent transform with this part's local transform
                 const worldTransform = Mat4.multiply(parentTransform, this.localTransform);
 
@@ -776,14 +781,25 @@
                     const normalMatrix = Mat4.transpose(Mat4.invert(worldTransform));
                     gl.uniformMatrix4fv(uNormalMatrix, false, normalMatrix);
 
+                    // Enable polygon offset for overlapping geometry to prevent z-fighting
+                    if (depthLayer > 0) {
+                        gl.enable(gl.POLYGON_OFFSET_FILL);
+                        gl.polygonOffset(depthLayer * 1.0, depthLayer * 1.0);
+                    }
+
                     // Bind and draw
                     this.mesh.bind();
                     this.mesh.draw();
+
+                    // Disable polygon offset after drawing
+                    if (depthLayer > 0) {
+                        gl.disable(gl.POLYGON_OFFSET_FILL);
+                    }
                 }
 
-                // Draw all children with accumulated transform
+                // Draw all children with accumulated transform and incremented depth layer
                 for (const child of this.children) {
-                    child.draw(worldTransform);
+                    child.draw(worldTransform, depthLayer + 1);
                 }
             }
         }
@@ -827,22 +843,20 @@
             body.addChild(rightShoulder);
 
             // Tail - child of body (longer, more elegant with bands)
-            const tailGeom = QuadricGenerator.createCylinder(0.13, 0.75, 24, yellow);
+            const tailGeom = QuadricGenerator.createCylinder(10000, 0.75, 24, yellow);
             let tailTransform = Mat4.translate(Mat4.identity(), [0, -0.2, -0.45]);
             tailTransform = Mat4.rotateY(tailTransform, Math.PI / 6);
             tailTransform = Mat4.rotateX(tailTransform, -Math.PI / 12);
             const tail = new HierarchicalBodyPart(tailGeom, tailTransform);
             body.addChild(tail);
 
-            // Tail bands - children of tail (3 brown rings)
-            for (let i = 0; i < 3; i++) {
-                const tailBandGeom = QuadricGenerator.createTorus(0.14, 0.04, 24, 12, brown);
-                let bandTransform = Mat4.translate(Mat4.identity(), [0, -0.5 + i * 0.23, 0]);
-                bandTransform = Mat4.rotateY(bandTransform, -Math.PI / 6);
-                bandTransform = Mat4.rotateX(bandTransform, Math.PI / 12);
-                const tailBand = new HierarchicalBodyPart(tailBandGeom, bandTransform);
-                tail.addChild(tailBand);
-            }
+                    // Tail band - cylinder on tail (1 brown cylinder)
+            const tailBandGeom = QuadricGenerator.createCylinder(0.18, 0.18,24, brown,);
+            let bandTransform = Mat4.translate(Mat4.identity(), [0, -0.5, 0]);
+            bandTransform = Mat4.rotateY(bandTransform, -Math.PI / 6);
+            bandTransform = Mat4.rotateX(bandTransform, Math.PI / 12);
+            const tailBand = new HierarchicalBodyPart(tailBandGeom, bandTransform);
+            tail.addChild(tailBand);
 
             // ===== HEAD - child of body (larger, more cat-like) =====
             const headGeom = QuadricGenerator.createEllipsoid(0.4, 0.44, 0.36, 36, yellow);
@@ -899,9 +913,9 @@
             const rightEyeHighlight = new HierarchicalBodyPart(rightEyeHighlightGeom, Mat4.translate(Mat4.identity(), [-0.05, 0.01, 0.015]));
             rightEye.addChild(rightEyeHighlight);
 
-            // ===== LEFT ARM - child of body (short, chubby arm) =====
+             // ===== LEFT ARM - child of body (short, chubby arm) =====
             const leftArmGeom = QuadricGenerator.createCylinder(0.14, 0.4, 24, yellow);
-            const leftArm = new HierarchicalBodyPart(leftArmGeom, Mat4.translate(Mat4.identity(), [-0.5, 0.15, 0]));
+            const leftArm = new HierarchicalBodyPart(leftArmGeom, Mat4.translate(Mat4.identity(), [-0.45, 0.3, 0]));
             body.addChild(leftArm);
 
             // LEFT HAND - child of left arm (three-fingered, rounder)
@@ -1260,10 +1274,10 @@
             model.addPart(elbow, elbowTransform);
 
             // Forearms with prominent brown armor bands
-            const forearmArmor = QuadricGenerator.createCylinder(0.09, 0.36, 24, brown);
-            armTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.4, 0]);
+            const forearmArmor = QuadricGenerator.createCylinder(0.09, 0.45, 24, brown);
+            armTransform = Mat4.translate(Mat4.identity(), [-0.55, 0.5, 0]);
             model.addPart(forearmArmor, armTransform);
-            armTransform = Mat4.translate(Mat4.identity(), [0.55, 0.4, 0]);
+            armTransform = Mat4.translate(Mat4.identity(), [0.55, 0.5, 0]);
             model.addPart(forearmArmor, armTransform);
 
             // Yellow skin visible through armor gaps
@@ -1489,7 +1503,7 @@
         }
 
         // Create 3D Tree - Simple trunk with leafy top
-        function createTree() {
+       function createTree() {
             const vertices = [];
             const normals = [];
             const colors = [];
@@ -1501,9 +1515,9 @@
 
             let idx = 0;
 
-            // Trunk (cylinder-like using box)
-            const tw = 0.15; // trunk width
-            const th = 1.2;  // trunk height
+            // Trunk (cylinder-like using box) - DIPERBESAR
+            const tw = 0.3; // trunk width (dari 0.15 jadi 0.3)
+            const th = 2.4;  // trunk height (dari 1.2 jadi 2.4)
 
             // Trunk front
             vertices.push(-tw, 0, tw, tw, 0, tw, tw, th, tw, -tw, th, tw);
@@ -1529,9 +1543,9 @@
             indices.push(idx, idx+1, idx+2, idx, idx+2, idx+3);
             idx += 4;
 
-            // Leaves - pyramid shape on top
-            const lw = 0.8; // leaf width
-            const lh = 1.0; // leaf height
+            // Leaves - pyramid shape on top - DIPERBESAR
+            const lw = 1.6; // leaf width (dari 0.8 jadi 1.6)
+            const lh = 2.0; // leaf height (dari 1.0 jadi 2.0)
             const ly = th;  // leaf y position
 
             // Leaf pyramid top point
@@ -1886,8 +1900,8 @@
                 this.bodyTilt = 0;                   // Body forward/backward tilt
                 this.leftArmRotation = 0;            // Left arm rotation
                 this.rightArmRotation = 0;           // Right arm rotation
-                this.leftHandRotation = 0;           // Left hand wave
-                this.rightHandRotation = 0;          // Right hand wave
+                this.leftHandRotation = 6;           // Left hand wave
+                this.rightHandRotation = 2;          // Right hand wave
                 this.leftKneeRotation = 0;           // Left knee bend
                 this.rightKneeRotation = 0;          // Right knee bend
                 this.headTilt = 0;                   // Head tilt side to side
@@ -2188,7 +2202,7 @@
         // ============================================
         // Semakin NEGATIF nilainya, semakin TURUN ground platform
         // Contoh: -0.6 (default), -0.8 (lebih turun), -0.4 (lebih naik)
-        const GROUND_HEIGHT_OFFSET = -1.5;
+        const GROUND_HEIGHT_OFFSET = -1.1;
         // ============================================
 
         // ============================================
@@ -2440,13 +2454,18 @@
             const skyG = 0.81 + flashIntensity * 0.15; // Sky blue
             const skyB = 0.92 + flashIntensity * 0.08; // Bright blue
             gl.clearColor(skyR, skyG, skyB, 1.0);
+            gl.clearDepth(1.0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LESS);
+            gl.depthRange(0.0, 1.0);
             gl.enable(gl.CULL_FACE);
+            gl.cullFace(gl.BACK);
+            gl.frontFace(gl.CCW);
 
             // Camera setup with WASD controls
             const aspect = canvas.width / canvas.height;
-            const projectionMatrix = Mat4.perspective(Math.PI / 4, aspect, 0.1, 100.0);
+            const projectionMatrix = Mat4.perspective(Math.PI / 4, aspect, 0.5, 50.0);
             const viewMatrix = Mat4.lookAt(cameraPos, cameraTarget, [0, 1, 0]);
 
             // Apply ALL transformations (Translation, Rotation, Scaling, Arbitrary Axis)
@@ -2584,37 +2603,7 @@
                 birdMesh.draw();
             }
 
-            // Draw particles with blend mode
-            const particles = particleSystem.getParticles();
-            if (particles.length > 0) {
-                gl.enable(gl.BLEND);
-                gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-                gl.depthMask(false); // Don't write to depth buffer
-
-                particleMesh.bind();
-                for (const particle of particles) {
-                    // Calculate alpha based on lifetime
-                    const alpha = particle.life / particle.maxLife;
-
-                    // Create particle model matrix
-                    let particleModel = Mat4.translate(Mat4.identity(), [particle.x, particle.y, particle.z]);
-                    // Billboard effect - face camera
-                    particleModel = Mat4.rotateY(particleModel, cameraTheta);
-                    particleModel = Mat4.scale(particleModel, [particle.size, particle.size, particle.size]);
-
-                    const particleNormal = Mat4.transpose(Mat4.invert(particleModel));
-                    gl.uniformMatrix4fv(uModelMatrix, false, particleModel);
-                    gl.uniformMatrix4fv(uNormalMatrix, false, particleNormal);
-                    gl.uniform1f(uGlowIntensity, alpha * 2.0); // Bright glow for particles
-
-                    particleMesh.draw();
-                }
-
-                gl.depthMask(true); // Re-enable depth writing
-                gl.disable(gl.BLEND);
-            }
-
-            // Draw current Pokemon model (hierarchical or mesh)
+            // Draw current Pokemon model (hierarchical or mesh) - OPAQUE OBJECTS FIRST
             gl.uniformMatrix4fv(uModelMatrix, false, modelMatrix);
             gl.uniformMatrix4fv(uNormalMatrix, false, normalMatrix);
             gl.uniform1f(uGlowIntensity, glowIntensity);
@@ -2687,10 +2676,41 @@
                 currentModel.mesh.draw();
             }
 
+            // Draw particles with blend mode - TRANSPARENT OBJECTS LAST
+            const particles = particleSystem.getParticles();
+            if (particles.length > 0) {
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+                gl.depthMask(false); // Don't write to depth buffer
+
+                particleMesh.bind();
+                for (const particle of particles) {
+                    // Calculate alpha based on lifetime
+                    const alpha = particle.life / particle.maxLife;
+
+                    // Create particle model matrix
+                    let particleModel = Mat4.translate(Mat4.identity(), [particle.x, particle.y, particle.z]);
+                    // Billboard effect - face camera
+                    particleModel = Mat4.rotateY(particleModel, cameraTheta);
+                    particleModel = Mat4.scale(particleModel, [particle.size, particle.size, particle.size]);
+
+                    const particleNormal = Mat4.transpose(Mat4.invert(particleModel));
+                    gl.uniformMatrix4fv(uModelMatrix, false, particleModel);
+                    gl.uniformMatrix4fv(uNormalMatrix, false, particleNormal);
+                    gl.uniform1f(uGlowIntensity, alpha * 2.0); // Bright glow for particles
+
+                    particleMesh.draw();
+                }
+
+                gl.depthMask(true); // Re-enable depth writing
+                gl.disable(gl.BLEND);
+            }
+
             // Enhanced evolution effects with multiple layers
             if (animator.isTransitioning) {
                 gl.enable(gl.BLEND);
                 gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+                gl.depthMask(false); // Don't write to depth buffer for transparent effects
 
                 // Psychic aura glow (3 layers for depth)
                 for (let i = 0; i < 3; i++) {
@@ -2731,6 +2751,7 @@
                     }
                 }
 
+                gl.depthMask(true); // Re-enable depth writing
                 gl.disable(gl.BLEND);
 
                 // Reset glow for next frame
